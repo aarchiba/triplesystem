@@ -160,15 +160,23 @@ void integrate_to(CRHS&RHS,
 };
 
 
-template <class num>
 void integrate_to_with_delay(CRHS&RHS,
-        bulirsch_stoer_dense_out<vector<num>, num> &stepper,
-        vector<num> &x,
-        num t) {
-    while (stepper.current_time<t) {
+        bulirsch_stoer_dense_out<vectq, quad> &stepper,
+        vectq &x,
+        quad t) {
+    while (stepper.current_time()<t) {
         stepper.do_step(RHS);
     }
-    stepper.calc_state(t, x);
+    if (stepper.current_time()==t) {
+        // This may be the first step; can't calculate state
+        // Or we may have gotten lucky and don't need to bother interpolating
+        x = stepper.current_state();
+    } 
+    if (stepper.previous_time()<=t) {
+        stepper.calc_state(t, x);
+    } else {
+        // Trying to go the wrong way? Something is wrong.
+    }
 };
 
 

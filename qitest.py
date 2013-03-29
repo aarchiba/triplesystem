@@ -40,12 +40,15 @@ ts = []
 xs = []
 O = quad_integrate.ODE(quad_integrate.PyRHS(rhs),
         [1,0],0)
+print "Creation worked"
 O = quad_integrate.ODE(quad_integrate.HarmonicRHS(),
         [1,0],0)
+print "starting"
 for t in np.linspace(0,2*np.pi,100):
     O.integrate_to(t)
     ts.append(O.t)
     xs.append(O.x)
+    print "got to %g" % t
 print "n:", O.n_evaluations
 
 ts = np.array(ts)

@@ -42,11 +42,14 @@ cdef extern from "extra.hpp":
             quad atol, quad rtol, quad initial_dt)
     cdef cppclass bulirsch_stoer[vectq,quad]:
         bulirsch_stoer(quad, quad)
+    cdef cppclass bulirsch_stoer_dense_out[vectq,quad]:
+        bulirsch_stoer_dense_out(quad, quad, quad, quad, bool)
+        void initialize(vectq&x0, quad&t0, quad&dt0)
     void integrate_to(CRHS&RHS, bulirsch_stoer[vectq,quad]&stepper,
             vectq&x, quad&t, quad&dt, quad t1)
-    #void integrate_to_with_delay[quad](CRHS&RHS, 
-    #        bulirsch_stoer_dense_output[vectq,quad]&stepper,
-    #        vectq&x, quad t)
+    void integrate_to_with_delay(CRHS&RHS, 
+            bulirsch_stoer_dense_out[vectq,quad]&stepper,
+            vectq&x, quad t)
 
 cdef extern from "boost/numeric/odeint.hpp" namespace "boost::numeric::odeint":
     # This has got to go into C++ or the type inference is a nightmare
@@ -99,12 +102,13 @@ cdef quad py_to_quad(x) except (<quad> FLT128_MAX):
 
 cdef class ODE:
     cdef vectq* _x
+    cdef vectq* _x0
     cdef quad _t
     cdef quad _dt
     cdef unsigned int _n
     cdef unsigned int _n_vec
     cdef CRHS* _crhs
-    cdef bulirsch_stoer[vectq,quad]* _stepper
+    cdef bulirsch_stoer_dense_out[vectq,quad]* _stepper
     cdef object pyrhs
     cdef int symmetric
     cdef quad delta
@@ -132,40 +136,46 @@ cdef class ODE:
                         [initial_value]*(self._n_vec+1))
         self._x = array_to_vectq(
                 np.asarray(initial_value, dtype=DTYPE))
+        self._x0 = array_to_vectq(
+                np.asarray(initial_value, dtype=DTYPE))
         if self._n_vec>0:
             if self.symmetric:
                 for i in range(self._n_vec):
                     for j in range(self._n):
-                        vectq_set(self._x, (2*i+1)*self._n+j,
-                                self._x.at((2*i+1)*self._n+j)
+                        vectq_set(self._x0, (2*i+1)*self._n+j,
+                                self._x0.at((2*i+1)*self._n+j)
                                     -self.delta*py_to_quad(vectors[i][j]))
-                        vectq_set(self._x, (2*i+2)*self._n+j,
-                                self._x.at((2*i+2)*self._n+j)
+                        vectq_set(self._x0, (2*i+2)*self._n+j,
+                                self._x0.at((2*i+2)*self._n+j)
                                     +self.delta*py_to_quad(vectors[i][j]))
             else:
                 for i in range(self._n_vec):
                     for j in range(self._n):
-                        vectq_set(self._x, (i+1)*self._n+j,
-                                self._x.at((i+1)*self._n+j)
+                        vectq_set(self._x0, (i+1)*self._n+j,
+                                  self._x0.at((i+1)*self._n+j)
                                     +self.delta*py_to_quad(vectors[i][j]))
         self._t = py_to_quad(t)
         self._dt = py_to_quad(initial_dt)
-        self._stepper = new bulirsch_stoer(py_to_quad(atol), py_to_quad(rtol))
+        self._stepper = new bulirsch_stoer_dense_out(
+                py_to_quad(atol), py_to_quad(rtol),
+                py_to_quad(1), py_to_quad(1),
+                True)
+        if self._dt==0:
+            self._dt = 1e-4
+        self._stepper.initialize(self._x0[0], self._t, self._dt)
     
     cpdef integrate_to(self, t):
         cdef quad _t
         _t = py_to_quad(t)
-        if self._dt==0:
-            self._dt = (_t-self._t)/1e2
-        integrate_to(self._crhs[0], 
+        integrate_to_with_delay(self._crhs[0], 
                 self._stepper[0],
                 self._x[0],
-                self._t,
-                self._dt,
                 _t)
+        self._t = _t
 
     def __dealloc__(self):
         del self._x
+        del self._x0
         del self._crhs
         del self._stepper
 
