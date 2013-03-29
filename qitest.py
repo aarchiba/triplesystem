@@ -40,15 +40,12 @@ ts = []
 xs = []
 O = quad_integrate.ODE(quad_integrate.PyRHS(rhs),
         [1,0],0)
-print "Creation worked"
 O = quad_integrate.ODE(quad_integrate.HarmonicRHS(),
         [1,0],0)
-print "starting"
 for t in np.linspace(0,2*np.pi,100):
     O.integrate_to(t)
     ts.append(O.t)
     xs.append(O.x)
-    print "got to %g" % t
 print "n:", O.n_evaluations
 
 ts = np.array(ts)
@@ -59,14 +56,6 @@ plt.plot(ts,xs[:,1])
 #plt.gca().set_yscale('symlog')
 plt.show()
 
-ts = np.linspace(0,2*np.pi,100)
-xs2 = quad_integrate.integrate_times(quad_integrate.HarmonicRHS(),
-        [1,0], ts)
-print ts.dtype, xs.dtype
-#plt.plot(ts,xs2[:,0])
-#plt.plot(ts,xs2[:,1])
-#plt.gca().set_yscale('symlog')
-#plt.show()
 
 
 state = normal(size=14)

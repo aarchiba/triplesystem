@@ -20,7 +20,6 @@ ctypedef np.npy_float128 DTYPE_t
 # Magic to make __float128 appear
 cdef extern from *:
     ctypedef long double quad # this is only for cython, where treating real quads as long doubles is fine
-#ctypedef __float128 quad
 ctypedef vector[quad] vectq
 
 cdef extern from "extra.hpp":
@@ -37,16 +36,9 @@ cdef extern from "extra.hpp":
         CRHS(callback_function cb, void*arg) except +
         void evaluate(vectq*x, vectq*dxdt, quad t) except *
         long long n_evaluations()
-    void change_x(vectq&x)
-    vector[vectq]* integrate_quad(CRHS&RHS, vectq&initial_state, vectq&times,
-            quad atol, quad rtol, quad initial_dt)
-    cdef cppclass bulirsch_stoer[vectq,quad]:
-        bulirsch_stoer(quad, quad)
     cdef cppclass bulirsch_stoer_dense_out[vectq,quad]:
         bulirsch_stoer_dense_out(quad, quad, quad, quad, bool)
         void initialize(vectq&x0, quad&t0, quad&dt0)
-    void integrate_to(CRHS&RHS, bulirsch_stoer[vectq,quad]&stepper,
-            vectq&x, quad&t, quad&dt, quad t1)
     void integrate_to_with_delay(CRHS&RHS, 
             bulirsch_stoer_dense_out[vectq,quad]&stepper,
             vectq&x, quad t)
@@ -217,47 +209,6 @@ cdef class ODE:
     property n_evaluations:
         def __get__(self):
             return self.pyrhs.n_evaluations
-
-cpdef integrate_times(
-        RHS rhs, initial_state,
-        times, atol=1e-10, rtol=1e-10, 
-        initial_dt = None):
-    cdef vectq*i_s=NULL
-    cdef vectq*ts=NULL
-    cdef vector[vectq]*r=NULL
-    cdef np.ndarray[DTYPE_t, ndim=2] ra
-    cdef size_t i
-    cdef CRHS *crhs=NULL
-
-    times = np.asarray(times,dtype=DTYPE)
-    initial_state = np.asarray(initial_state,dtype=DTYPE)
-
-    if len(times.shape)!=1:
-        raise ValueError("times must be one-dimensional but has shape %s" % (times.shape,))
-    if len(initial_state.shape)!=1:
-        raise ValueError("initial_state must be one-dimensional but has shape %s" % (initial_state.shape,))
-    if initial_dt is None:
-        if len(times)>1:
-            initial_dt = times[1]-times[0]
-        else:
-            initial_dt = 0
-
-    try:
-        crhs = new CRHS(class_callback, <void*>rhs)
-        i_s = array_to_vectq(initial_state)
-        ts = array_to_vectq(times)
-        r = integrate_quad(crhs[0], i_s[0], ts[0], 
-                py_to_quad(atol), py_to_quad(rtol),
-                py_to_quad(initial_dt))
-        ra = np.empty((ts.size(), i_s.size()),dtype=DTYPE)
-        for i in range(ts.size()):
-            ra[i] = vectq_to_array(&r.at(i))
-    finally:
-        del i_s
-        del ts
-        del r
-        del crhs
-    return ra
 
 cdef void class_callback(vectq*x, vectq*dxdt, quad t, void*arg) except *:
     rhs = (<RHS>arg)
