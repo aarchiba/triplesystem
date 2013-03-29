@@ -25,6 +25,9 @@ ctypedef vector[quad] vectq
 
 cdef extern from "extra.hpp":
     quad cpowq(quad,quad)
+    quad cexpm1q(quad)
+    quad clog1pq(quad)
+    quad csqrtq(quad)
     enum quad128values:
         FLT128_MAX, M_Eq, M_PIq
     void vectq_set(vectq*v, size_t i, quad e)
@@ -41,6 +44,9 @@ cdef extern from "extra.hpp":
         bulirsch_stoer(quad, quad)
     void integrate_to(CRHS&RHS, bulirsch_stoer[vectq,quad]&stepper,
             vectq&x, quad&t, quad&dt, quad t1)
+    #void integrate_to_with_delay[quad](CRHS&RHS, 
+    #        bulirsch_stoer_dense_output[vectq,quad]&stepper,
+    #        vectq&x, quad t)
 
 cdef extern from "boost/numeric/odeint.hpp" namespace "boost::numeric::odeint":
     # This has got to go into C++ or the type inference is a nightmare
@@ -382,4 +388,45 @@ cdef class KeplerRHSDoppler(RHS):
             for i in range(21):
                 vectq_set(dxdt, i+21*j, dxdt_r[i])
 
+        return 0
+cdef class KeplerRHSRelativity(RHS):
+    cdef int special, general
+    cdef quad c2, G
+    def __init__(self, special=True, general=True):
+        self.special = special
+        self.general = general
+        self.c2 = 86400*86400
+        self.G = 36779.59091405234
+    cdef int _evaluate(self, vectq*x, vectq*dxdt, quad t) except -1:
+        cdef quad x_r[21]
+        cdef quad dxdt_r[21]
+        cdef unsigned int i
+        cdef quad slowing
+        cdef quad temp, r, v2
+
+        for i in range(21):
+            x_r[i] = x.at(i)
+        kepler_inner(x_r, dxdt_r, t)
+        for i in range(21):
+            vectq_set(dxdt, i, dxdt_r[i])
+        slowing = 0
+        if self.special:
+            v2 = x_r[3]*x_r[3]+x_r[4]*x_r[4]+x_r[5]*x_r[5]
+            slowing = cexpm1q(-0.5*clog1pq(-v2/self.c2))
+        if self.general:
+            r = (x_r[7]-x_r[0])*(x_r[7]-x_r[0])
+            r += (x_r[8]-x_r[1])*(x_r[8]-x_r[1])
+            r += (x_r[9]-x_r[2])*(x_r[9]-x_r[2])
+            r = csqrtq(r)
+            temp = cexpm1q(-0.5*clog1pq(-2*self.G*x_r[13]/(r*self.c2)))
+            slowing = slowing + temp + slowing*temp
+
+            r = (x_r[14]-x_r[0])*(x_r[14]-x_r[0])
+            r += (x_r[15]-x_r[1])*(x_r[15]-x_r[1])
+            r += (x_r[16]-x_r[2])*(x_r[16]-x_r[2])
+            r = csqrtq(r)
+            temp = cexpm1q(-0.5*clog1pq(-2*self.G*x_r[20]/(r*self.c2)))
+            slowing = slowing + temp + slowing*temp
+
+        vectq_set(dxdt,21,slowing)
         return 0

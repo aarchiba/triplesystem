@@ -46,10 +46,28 @@ using namespace boost::numeric::odeint;
 inline quad cpowq(quad b, quad e) {
     return powq(b,e);
 }
+inline quad cexpm1q(quad b) {
+    return expm1q(b);
+}
+inline quad clog1pq(quad b) {
+    return log1pq(b);
+}
+inline quad csqrtq(quad b) {
+    return sqrtq(b);
+}
 #else
 // Cython can't cope with extern "C"
 inline quad cpowq(quad b, quad e) {
     return pow(b,e);
+}
+inline quad cexpm1q(quad b) {
+    return expm1(b);
+}
+inline quad clog1pq(quad b) {
+    return log1p(b);
+}
+inline quad csqrtq(quad b) {
+    return sqrt(b);
 }
 #endif
 
@@ -140,4 +158,17 @@ void integrate_to(CRHS&RHS,
         stepper.try_step(RHS, x, t, dt);
     }
 };
+
+
+template <class num>
+void integrate_to_with_delay(CRHS&RHS,
+        bulirsch_stoer_dense_out<vector<num>, num> &stepper,
+        vector<num> &x,
+        num t) {
+    while (stepper.current_time<t) {
+        stepper.do_step(RHS);
+    }
+    stepper.calc_state(t, x);
+};
+
 
