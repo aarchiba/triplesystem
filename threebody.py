@@ -11,6 +11,27 @@ import kepler
 import quad_integrate
 
 
+def load_data(filename="0337_delays_2.txt",
+        doppler_correct=True):
+    delay_list = []
+    with open("0337_delays_2.txt") as f:
+        for l in f.readlines():
+            if l.startswith("#"):
+                continue
+            mjd, delay, tel = l.split()
+            delay_list.append((float(mjd),float(delay),tel))
+    mjds = np.array([m for (m,d,t) in delay_list])
+    delays = np.array([d for (m,d,t) in delay_list])
+    tel_list = list(sorted(set([t for (m,d,t) in delay_list])))
+    tels = np.array([tel_list.index(t) for (m,d,t) in delay_list])
+    if doppler_correct:
+        mjds -= delays/86400.
+    ix = np.argsort(mjds)
+    mjds = mjds[ix]
+    delays = delays[ix]
+    tels = tels[ix]
+
+    return mjds, delays, tel_list, tels
 orbit_dir = "orbits"
 
 def save_orbit(parameters, times, states, derivatives = None):
@@ -169,8 +190,30 @@ def shapiro_delay(s_src, s_m):
     c = 86400. # lt-s per day
     dx = s_m[...,:3]-s_src[...,:3]
     ldx = np.sqrt(np.sum(dx**2,axis=-1))
-    return -86400*2*kepler.G*s_m[...,6]*c**(-3)*np.log(1-dx[...,2]/ldx) # in s
+    #return -86400*2*kepler.G*s_m[...,6]*c**(-3)*np.log(1-dx[...,2]/ldx) # in s
+    return -86400*2*kepler.G*s_m[...,6]*c**(-3)*np.log(dx[...,2]+ldx) # in s
 
 def shapiros(states):
     return (shapiro_delay(states[:,:7],states[:,7:14]) +
                 shapiro_delay(states[:,:7],states[:,14:21]))
+
+def fmt(x, u):
+    
+    exponent_number = np.floor(np.log10(np.abs(x)))
+    exponent_error = np.floor(np.log10(u))
+    if u*10**(-exponent_error)>=2:
+        ndigs = 1
+    else:
+        ndigs = 2
+    if exponent_error>exponent_number:
+        fstr = "0({:"+str(ndigs)+"d})e{:d}"
+        return fstr.format(
+            int(np.rint(u*10**(-exponent_error+(ndigs-1)))),
+            int(exponent_error-ndigs+1))
+    number_digits = int(exponent_number-exponent_error)+ndigs-1
+    fstr = "{:."+str(number_digits)+"f}({:d})e{:d}"
+    return fstr.format(
+       x*10**(-exponent_number),
+       int(np.rint(u*10**(-exponent_error+(ndigs-1)))),
+       int(exponent_number))
+
