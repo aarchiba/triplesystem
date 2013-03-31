@@ -14,24 +14,26 @@ import quad_integrate
 def load_data(filename="0337_delays_2.txt",
         doppler_correct=True):
     delay_list = []
-    with open("0337_delays_2.txt") as f:
+    with open("0337_delays_uncertainty.txt") as f:
         for l in f.readlines():
             if l.startswith("#"):
                 continue
-            mjd, delay, tel = l.split()
-            delay_list.append((float(mjd),float(delay),tel))
-    mjds = np.array([m for (m,d,t) in delay_list])
-    delays = np.array([d for (m,d,t) in delay_list])
-    tel_list = list(sorted(set([t for (m,d,t) in delay_list])))
-    tels = np.array([tel_list.index(t) for (m,d,t) in delay_list])
+            mjd, delay, tel, uncert = l.split()
+            delay_list.append((float(mjd),float(delay),tel,float(uncert)))
+    mjds = np.array([m for (m,d,t,u) in delay_list])
+    delays = np.array([d for (m,d,t,u) in delay_list])
+    tel_list = list(sorted(set([t for (m,d,t,u) in delay_list])))
+    tels = np.array([tel_list.index(t) for (m,d,t,u) in delay_list])
+    uncerts = 1e-6*np.array([u for (m,d,t,u) in delay_list])
     if doppler_correct:
         mjds -= delays/86400.
     ix = np.argsort(mjds)
     mjds = mjds[ix]
     delays = delays[ix]
     tels = tels[ix]
+    uncerts = uncerts[ix]
 
-    return mjds, delays, tel_list, tels
+    return mjds, delays, tel_list, tels, uncerts
 orbit_dir = "orbits"
 
 def save_orbit(parameters, times, states, derivatives = None):
@@ -81,7 +83,7 @@ def least_squared(delays):
     def _least_squared(o):
         return np.mean((o.states[:,2]-delays)**2)
     return _least_squared
-def remove_trend(vec, mjds, tel_list, tels,
+def remove_trend(vec, mjds, tel_list, tels, uncerts=None,
     P=True, Pdot=True, jumps=True,
     position=False, proper_motion=False, parallax=False):
     year_length = 365.2425
@@ -103,8 +105,14 @@ def remove_trend(vec, mjds, tel_list, tels,
         non_orbital_basis.extend([np.cos(4*np.pi*mjds/year_length),
                                   np.sin(4*np.pi*mjds/year_length)])
     non_orbital_basis = np.vstack(non_orbital_basis).T
-    x, res, rk, s = scipy.linalg.lstsq(non_orbital_basis, vec)
+    if uncerts is None:
+        x, res, rk, s = scipy.linalg.lstsq(non_orbital_basis, vec)
+    else:
+        x, res, rk, s = scipy.linalg.lstsq(
+            non_orbital_basis/uncerts[:,None], 
+            vec/uncerts)
     return vec-np.dot(non_orbital_basis,x)
+
 def process_remove_trend(o):
     o["states"][:,2] = remove_trend(o["states"][:,2])
 
