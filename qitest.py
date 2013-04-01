@@ -84,3 +84,9 @@ for t in ts:
     print t
     O.integrate_to(t)
 
+O = quad_integrate.ODE(quad_integrate.KeplerRHS(special=True,general=True), state, 0, use_quad=False)
+ts = np.linspace(0,1,100)
+for t in ts:
+    print t
+    O.integrate_to(t)
+
