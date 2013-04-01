@@ -176,23 +176,23 @@ const quad G_mks = 6.67398e-11;
 const quad c = 299792458;
 const quad c2 = c*c;
 const quad M_sun = 1.9891e30;
-const quad G = G_mks * c*c*c * M_sun * 86400*86400;
+const quad G = G_mks / (c*c*c) * M_sun * 86400*86400;
 
 template<class num>
-class KeplerRHS {
+class cKeplerRHS {
         long long evals;
         const bool special, general;
-        const unsigned int n;
     public:
-        KeplerRHS(bool special, bool general, unsigned int n) : 
-            special(special), general(general), n(n), evals(0) { };
+        cKeplerRHS(bool special, bool general) : 
+            evals(0), special(special), general(general) { };
         
-        void kepler(num x[], num dxdt[], const num t) {
+        void kepler(const num x[], num dxdt[], const num t) {
             unsigned int i,j,k;
             num m_i, m_j;
             num r2_ij, cst;
 
             for (i=0;i<21;i++) dxdt[i]=0;
+
             for (i=0;i<3;i++) {
                 for (k=0;k<3;k++)
                     dxdt[7*i+k] = x[7*i+k+3];
@@ -212,8 +212,9 @@ class KeplerRHS {
             }
         }
 
-        void relativity(num x[], num dxdt[], const num t) {
+        void relativity(const num x[], num dxdt[], const num t) {
             num slowing, temp, r, v2;
+            unsigned int j,k;
 
             slowing = 0;
             if (this->special) {
@@ -221,25 +222,20 @@ class KeplerRHS {
                 slowing = expm1(-0.5*log1p(-v2/c2));
             }
             if (this->general) {
-                r = sqr(x[7]-x[0]);
-                r += sqr(x[8]-x[1]);
-                r += sqr(x[9]-x[2]);
-                r = sqrt(r);
-                temp = expm1(-0.5*log1p(-2*G*x[13]/(r*c2)));
-                slowing = slowing + temp + slowing*temp;
-
-                r = sqr(x[14]-x[0]);
-                r += sqr(x[15]-x[1]);
-                r += sqr(x[16]-x[2]);
-                r = sqrt(r);
-                temp = expm1(-0.5*log1p(-2*G*x[20]/(r*c2)));
-                slowing = slowing + temp + slowing*temp;
+                for (j=1;j<3;j++) {
+                    r = 0;
+                    for (k=0;k<3;k++) 
+                        r += sqr(x[7*j+k]-x[k]);
+                    r = sqrt(r);
+                    temp = expm1(-0.5*log1p(-2*G*x[7*j+6]/(r*c2)));
+                    slowing = slowing + temp + slowing*temp;
+                }
             }
             dxdt[21] = slowing;
         }
         void operator() ( const vector<num> &x,
                           vector<num> &dxdt, const num t) {
-            unsigned int i,j,step;
+            unsigned int i,j,step,n;
             num x_a[22], dxdt_a[22];
             this->evals++;
             if (this->special || this->general) {
@@ -247,14 +243,15 @@ class KeplerRHS {
             } else {
                 step = 21;
             }
-            for (i=0; i<this->n; i++) {
+            n = x.size()/step;
+            for (i=0; i<n; i++) {
                 for (j=0; j<step; j++)
-                    x_a[j] = x[j];
-                this->kepler(x_a, dxdt_a, t);
+                    x_a[j] = x[j+i*step];
+                this->kepler(x_a+i*step, dxdt_a+i*step, t);
                 if (this->special || this->general)
-                    this->relativity(x_a, dxdt_a, t);
+                    this->relativity(x_a+i*step, dxdt_a+i*step, t);
                 for (j=0; j<step; j++)
-                    dxdt[j] = dxdt_a[j];
+                    dxdt[j+i*step] = dxdt_a[j];
             }
         }
         void evaluate(const vector<num> *x,
@@ -292,8 +289,8 @@ void integrate_to_with_delay(CRHS<quad> rhs,
     }
 };
 */
-template<class num>
-void integrate_to(CRHS<num> rhs,
+template<class num, class System>
+void integrate_to(System rhs,
         bulirsch_stoer<vector<num>, num> &stepper,
         vector<num> &x, 
         num &t, num &dt, num t1) {

@@ -35,9 +35,10 @@ cdef extern from "extra.hpp":
     cdef cppclass CRHS[num]:
         CRHS(void (*cb)(vector[num]*,vector[num]*,num,void*), void*arg) except +
         void evaluate(vector[num] &x, vector[num] &dxdt, num t) except +
-    cdef cppclass KeplerRHS[num]:
-        KeplerRHS(int special, int general, unsigned int n) except +
-        void evaluate(vector[num] &x, vector[num] &dxdt, num t) except +
+    cdef cppclass cKeplerRHS[num]:
+        cKeplerRHS(int special, int general) except +
+        void evaluate(vector[num] *x, vector[num] *dxdt, num t) except +
+        long long n_evaluations()
 
     #cdef cppclass bulirsch_stoer_dense_out[vect,num]:
     #    bulirsch_stoer_dense_out(num, num, num, num, bool)
@@ -46,7 +47,7 @@ cdef extern from "extra.hpp":
     #        bulirsch_stoer_dense_out[vectq,quad]&stepper,
     #        vectq&x, quad t)
     cdef cppclass bulirsch_stoer[vect,num]:
-        bulirsch_stoer(num, num, num, num)
+        bulirsch_stoer(num, num, num, num) except +
     void integrate_to(CRHS[quad] rhs, 
             bulirsch_stoer[vectq,quad]&stepper,
             vectq&x, quad&t, quad&dt, quad t1) except +
@@ -96,6 +97,7 @@ cdef class ODE:
     cdef unsigned int _n
     cdef unsigned int _n_vec
     cdef CRHS[quad]* _crhs
+    cdef cKeplerRHS[quad]* _krhs
     cdef bulirsch_stoer[vectq,quad]* _stepper
     cdef object pyrhs
     cdef int symmetric
@@ -105,14 +107,19 @@ cdef class ODE:
             atol=1e-10, rtol=1e-10, vectors=[], delta=1e-6,
             symmetric=False):
         cdef unsigned int i, j
-        if not isinstance(rhs,RHS):
-            raise ValueError("rhs must be an instance of the RHS class; try PyRHS")
-        self._crhs = new CRHS[quad](&class_callback, <void*>rhs)
-        self.pyrhs = rhs # prevent freeing
 
         self._n = len(initial_value)
         self._n_vec = len(vectors)
         self.delta = delta
+
+        if not isinstance(rhs,RHS):
+            raise ValueError("rhs must be an instance of the RHS class; try PyRHS")
+        self.pyrhs = rhs # prevent freeing
+        if isinstance(rhs,KeplerRHS):
+            self._krhs = (<KeplerRHS>(self.pyrhs))._krhs
+        else:
+            self._crhs = new CRHS[quad](&class_callback, <void*>rhs)
+        
 
         self.symmetric = symmetric
         if self._n_vec>0:
@@ -158,12 +165,20 @@ cdef class ODE:
         if self._dt==0:
             self._dt = 1e-4*(_t-self._t)
 
-        integrate_to(self._crhs[0], 
-                self._stepper[0],
-                self._x[0],
-                self._t,
-                self._dt,
-                _t)
+        if self._krhs!=NULL:
+            integrate_to(self._krhs[0], 
+                    self._stepper[0],
+                    self._x[0],
+                    self._t,
+                    self._dt,
+                    _t)
+        else:
+            integrate_to(self._crhs[0], 
+                    self._stepper[0],
+                    self._x[0],
+                    self._t,
+                    self._dt,
+                    _t)
 
     def __dealloc__(self):
         del self._x
@@ -256,4 +271,16 @@ cdef class HarmonicRHS(RHS):
         return 0
 
 
+cdef class KeplerRHS(RHS):
+    cdef cKeplerRHS[quad]*_krhs
+    def __init__(self, special=True, general=True):
+        self._krhs=new cKeplerRHS[quad](special, general)
+    cdef int _evaluate(self, vectq*x, vectq*dxdt, quad t) except -1:
+        self._krhs.evaluate(x, dxdt, t)
+    def __dealloc__(self):
+        del self._krhs
+    property n_evaluations:
+        def __get__(self):
+            return self._krhs.n_evaluations()
+     
 
