@@ -229,6 +229,7 @@ cdef class ODE:
                         self._dt,
                         _t)
             else:
+                raise ValueError
                 integrate_to(self._crhs[0], 
                         self._stepper[0],
                         self._x[0],

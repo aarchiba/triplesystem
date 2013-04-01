@@ -12,10 +12,10 @@ import kepler
 import quad_integrate
 
 
-def load_data(filename="0337_delays_2.txt",
+def load_data(filename="0337_delays_uncertainty.txt",
         doppler_correct=True):
     delay_list = []
-    with open("0337_delays_uncertainty.txt") as f:
+    with open(filename) as f:
         for l in f.readlines():
             if l.startswith("#"):
                 continue
@@ -193,6 +193,7 @@ def compute_orbit(parameters, times, with_derivatives = False, epoch = 0,
             special=special, general=general)
     if special or general:
         initial_values = np.concatenate((initial_values, [0]))
+        vectors = np.concatenate([vectors, np.zeros(14)[:,None]], axis=1)
     states = []
     if with_derivatives:
         derivatives = []

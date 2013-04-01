@@ -179,11 +179,11 @@ class CRHS {
         }
 };
 
+class MisshapenState { };
 #define G ((num)36779.59091405234)
 #define c2 ((num)7464960000)
 template<class num>
 class cKeplerRHS {
-
         long long &evals;
         const bool special, general;
     public:
@@ -248,12 +248,13 @@ class cKeplerRHS {
                 step = 21;
             }
             n = x.size()/step;
+            if (x.size() % step) throw MisshapenState();
             for (i=0; i<n; i++) {
                 for (j=0; j<step; j++)
                     x_a[j] = x[j+i*step];
-                this->kepler(x_a+i*step, dxdt_a+i*step, t);
+                this->kepler(x_a, dxdt_a, t);
                 if (this->special || this->general)
-                    this->relativity(x_a+i*step, dxdt_a+i*step, t);
+                    this->relativity(x_a, dxdt_a, t);
                 for (j=0; j<step; j++)
                     dxdt[j+i*step] = dxdt_a[j];
             }
@@ -267,7 +268,7 @@ class cKeplerRHS {
 class WrongWay {
 };
 
-/* Problem: GCC doesn't provide typeinfo for __float128
+/* Problem: GCC doesn't provide typeinfo for __float128 and dense output needs it for some reason
 template<class num>
 void integrate_to_with_delay(CRHS<quad> rhs,
         bulirsch_stoer_dense_out<vector<quad>, quad> &stepper,

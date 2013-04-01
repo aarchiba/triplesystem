@@ -90,3 +90,11 @@ for t in ts:
     O.integrate_to(t)
 print O.t, O.x
 
+O = quad_integrate.ODE(quad_integrate.KeplerRHS(special=True,general=True), state, 0, 
+        vectors=np.eye(len(state))[:14], use_quad=True)
+print "Starting"
+ts = np.linspace(0,1,100)
+for t in ts:
+    O.integrate_to(t)
+print O.t, O.x
+
