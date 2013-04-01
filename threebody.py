@@ -2,6 +2,7 @@ import os
 import string
 import random
 from glob import glob
+import time
 
 import numpy as np
 import numpy.random
@@ -34,6 +35,42 @@ def load_data(filename="0337_delays_2.txt",
     uncerts = uncerts[ix]
 
     return mjds, delays, tel_list, tels, uncerts
+
+
+best_parameters = [
+	1.2175286574040021089 ,
+	1.6294017424245676595 ,
+	-9.167915208909978898e-05 ,
+	0.00068569767885231061913 ,
+	0.40748888446707576171 ,
+	1.4928413805962691032 ,
+	0.13739679461335577318 ,
+	74.672709181427526108 ,
+	327.25754395677783318 ,
+	-0.0034621278217266577593 ,
+	0.035186272495204991849 ,
+	313.93558318886735767 ,
+	91.611372740471614128 ,
+	-4.1110581185487967683e-05 ,
+]
+best_errors = [
+	1.7556575632954052e-08 ,
+	2.2817007892786326e-10 ,
+	1.6568485883029365e-08 ,
+	1.4557847466119638e-08 ,
+	8.663674326627852e-09 ,
+	2.6254576384333125e-05 ,
+	1.0288730471728326e-06 ,
+	2.140792343411674e-07 ,
+	3.322543685198226e-07 ,
+	7.601435134628213e-10 ,
+	6.106381168432414e-10 ,
+	2.1022233493158794e-07 ,
+	0.001609442571711061 ,
+	7.981798704760887e-06 ,
+]
+
+
 orbit_dir = "orbits"
 
 def save_orbit(parameters, times, states, derivatives = None):
@@ -118,11 +155,12 @@ def process_remove_trend(o):
 
 def compute_orbit(parameters, times, with_derivatives = False, epoch = 0,
         save_orbits=False, load_orbits=False, tol=1e-16, 
-        shapiro=False, special=False, general=False):
+        shapiro=False, special=False, general=False, use_quad=False):
     if (load_orbits or save_orbits) and (shapiro or special or general1 or general2):
         raise NotImplementedError
-    if with_derivatives and (special or general):
+    if shapiro and with_derivatives:
         raise NotImplementedError
+    start = time.time()
     parameters = np.asarray(parameters)
     times = np.asarray(times)
     if load_orbits:
@@ -132,31 +170,29 @@ def compute_orbit(parameters, times, with_derivatives = False, epoch = 0,
 
     o = dict(parameters=parameters, times=times)
 
-    # FIXME: deal with bogus values when state is 22 long
     try:
         initial_values, jac = kepler.kepler_three_body_measurable(
                 *(list(parameters)+[0,np.zeros(3),np.zeros(3),0]))
     except (ValueError, RuntimeError): # bogus system parameters
-        states = np.random.uniform(0, 1e40, (len(times),21))
-        #states = np.empty((len(times),21))
-        #states[...] = np.inf # make least-squared come out infinite
+        if special or general:
+            ls = 22
+        else:
+            ls = 21
+        states = np.random.uniform(0, 1e40, (len(times),ls))
         o['states'] = states
-        derivatives = np.random.normal(0, 1e40, (len(times),21,14))
-        #derivatives = np.empty((len(times),21,14))
-        #derivatives[...] = np.inf
-        o['derivatives'] = derivatives
+        if with_derivatives:
+            derivatives = np.random.normal(0, 1e40, (len(times),ls,14))
+            o['derivatives'] = derivatives
         o['name'] = None
         return o
     vectors = jac[:,:14].T
     
     # FIXME: deal with epoch not at the beginning
 
+    rhs = quad_integrate.KeplerRHS(
+            special=special, general=general)
     if special or general:
-        rhs = quad_integrate.KeplerRHSRelativity(
-                special=special, general=general)
         initial_values = np.concatenate((initial_values, [0]))
-    else:
-        rhs = quad_integrate.KeplerRHS()
     states = []
     if with_derivatives:
         derivatives = []
@@ -164,7 +200,8 @@ def compute_orbit(parameters, times, with_derivatives = False, epoch = 0,
                initial_values, 0,
                rtol = tol, atol = tol,
                vectors = vectors,
-               delta = 1e-10)
+               delta = 1e-10,
+               use_quad = use_quad)
         for t in times:
             O.integrate_to(t)
             states.append(O.x)
@@ -175,7 +212,8 @@ def compute_orbit(parameters, times, with_derivatives = False, epoch = 0,
                initial_values, 0,
                rtol = tol, atol = tol,
                vectors = [],
-               delta = 1e-10)
+               delta = 1e-10,
+               use_quad = use_quad)
         for t in times:
             O.integrate_to(t)
             states.append(O.x)
@@ -188,6 +226,8 @@ def compute_orbit(parameters, times, with_derivatives = False, epoch = 0,
         o["einstein"] = states[:,21]
     if shapiro:
         o["shapiro"] = shapiros(states)
+    o["n_evaluations"] = O.n_evaluations
+    o["time"] = time.time()-start
 
     if save_orbits:
         o["name"] = save_orbit(**o)

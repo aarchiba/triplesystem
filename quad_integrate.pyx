@@ -37,7 +37,7 @@ cdef extern from "extra.hpp":
         CRHS(void (*cb)(vector[num]*,vector[num]*,num,void*), void*arg) except +
         void evaluate(vector[num] &x, vector[num] &dxdt, num t) except +
     cdef cppclass cKeplerRHS[num]:
-        cKeplerRHS(int special, int general) except +
+        cKeplerRHS(int special, int general, long long&evals) except +
         void evaluate(vector[num] *x, vector[num] *dxdt, num t) except +
         long long n_evaluations()
 
@@ -374,11 +374,10 @@ cdef class HarmonicRHS(RHS):
 cdef class KeplerRHS(RHS):
     cdef cKeplerRHS[quad]*_krhs
     cdef cKeplerRHS[longdouble]*_krhs_l
-    cdef int use_quad
-    def __init__(self, special=True, general=True, use_quad=True):
-        self.use_quad = use_quad
-        self._krhs=new cKeplerRHS[quad](special, general)
-        self._krhs_l=new cKeplerRHS[longdouble](special, general)
+    cdef long long _evals
+    def __init__(self, special=True, general=True):
+        self._krhs=new cKeplerRHS[quad](special, general, self._evals)
+        self._krhs_l=new cKeplerRHS[longdouble](special, general, self._evals)
     cdef int _evaluate(self, vectq*x, vectq*dxdt, quad t) except -1:
         self._krhs.evaluate(x, dxdt, t)
     def __dealloc__(self):
@@ -386,9 +385,4 @@ cdef class KeplerRHS(RHS):
         del self._krhs_l
     property n_evaluations:
         def __get__(self):
-            if self.use_quad:
-                return self._krhs.n_evaluations()
-            else:
-                return self._krhs_l.n_evaluations()
-     
-
+            return self._evals

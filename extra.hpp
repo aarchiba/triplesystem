@@ -2,6 +2,7 @@
 #include <vector>
 #include <float.h>
 #include <limits>
+#include <cmath>
 using namespace std; //needed?
 
 extern "C" {
@@ -41,6 +42,9 @@ namespace std {
     inline quad expm1(quad b) {
         return expm1q(b);
     }
+    inline long double expm1(long double b) {
+        return expm1l(b);
+    }
     inline quad sin(quad b) {
         return sinq(b);
     }
@@ -52,6 +56,9 @@ namespace std {
     }
     inline quad log1p(quad b) {
         return log1pq(b);
+    }
+    inline long double log1p(long double b) {
+        return log1pl(b);
     }
     inline quad sqrt(quad b) {
         return sqrtq(b);
@@ -172,19 +179,16 @@ class CRHS {
         }
 };
 
-const quad G_mks = 6.67398e-11;
-const quad c = 299792458;
-const quad c2 = c*c;
-const quad M_sun = 1.9891e30;
-const quad G = G_mks / (c*c*c) * M_sun * 86400*86400;
-
+#define G ((num)36779.59091405234)
+#define c2 ((num)7464960000)
 template<class num>
 class cKeplerRHS {
-        long long evals;
+
+        long long &evals;
         const bool special, general;
     public:
-        cKeplerRHS(bool special, bool general) : 
-            evals(0), special(special), general(general) { };
+        cKeplerRHS(bool special, bool general, long long&evals) : 
+            evals(evals), special(special), general(general) { };
         
         void kepler(const num x[], num dxdt[], const num t) {
             unsigned int i,j,k;
@@ -257,9 +261,6 @@ class cKeplerRHS {
         void evaluate(const vector<num> *x,
                           vector<num> *dxdt, const num t) {
             (*this)(*x, *dxdt, t);
-        }
-        long long n_evaluations() {
-            return this->evals;
         }
 };
 
