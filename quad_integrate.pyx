@@ -21,42 +21,38 @@ ctypedef np.npy_float128 DTYPE_t
 cdef extern from *:
     ctypedef long double quad # this is only for cython, where treating real quads as long doubles is fine
 ctypedef vector[quad] vectq
+#ctypedef long double longdouble
+#ctypedef vector[longdouble] vectl
+
 
 cdef extern from "extra.hpp":
-    quad cpowq(quad,quad)
-    quad cexpm1q(quad)
-    quad clog1pq(quad)
-    quad csqrtq(quad)
     enum quad128values:
-        FLT128_MAX, M_Eq, M_PIq
+        FLT128_MAX
     void vectq_set(vectq*v, size_t i, quad e)
     ctypedef void (*callback_function)(
             vectq*x, vectq*dxdt, quad t, void* arg) except *
-    cdef cppclass CRHS:
-        CRHS(callback_function cb, void*arg) except +
-        void evaluate(vectq*x, vectq*dxdt, quad t) except *
-        long long n_evaluations()
-    cdef cppclass bulirsch_stoer_dense_out[vectq,quad]:
-        bulirsch_stoer_dense_out(quad, quad, quad, quad, bool)
-        void initialize(vectq&x0, quad&t0, quad&dt0)
-    void integrate_to_with_delay(CRHS&RHS, 
-            bulirsch_stoer_dense_out[vectq,quad]&stepper,
-            vectq&x, quad t)
+
+    cdef cppclass CRHS[num]:
+        CRHS(void (*cb)(vector[num]*,vector[num]*,num,void*), void*arg) except +
+        void evaluate(vector[num] &x, vector[num] &dxdt, num t) except +
+    cdef cppclass KeplerRHS[num]:
+        KeplerRHS(int special, int general, unsigned int n) except +
+        void evaluate(vector[num] &x, vector[num] &dxdt, num t) except +
+
+    #cdef cppclass bulirsch_stoer_dense_out[vect,num]:
+    #    bulirsch_stoer_dense_out(num, num, num, num, bool)
+    #    void initialize(vect&x0, num&t0, num&dt0)
+    #void integrate_to_with_delay(CRHS[quad]&rhs, 
+    #        bulirsch_stoer_dense_out[vectq,quad]&stepper,
+    #        vectq&x, quad t)
+    cdef cppclass bulirsch_stoer[vect,num]:
+        bulirsch_stoer(num, num, num, num)
+    void integrate_to(CRHS[quad] rhs, 
+            bulirsch_stoer[vectq,quad]&stepper,
+            vectq&x, quad&t, quad&dt, quad t1) except +
 
 cdef extern from "boost/numeric/odeint.hpp" namespace "boost::numeric::odeint":
     # This has got to go into C++ or the type inference is a nightmare
-    # Only works with doubles
-    #cdef size_t integrate(CRHS, vectq&, quad, quad, quad) except 0
-    #cdef cppclass runge_kutta4[State,Value]:
-    #    pass
-    #cdef size_t integrate_const(runge_kutta4[vectq,quad], CRHS, vectq&, quad, quad, quad) except 0
-    #cdef cppclass runge_kutta_cash_karp54[State]:
-    #    pass
-    #ctypedef runge_kutta_cash_karp54[vectq] error_stepper_type 
-    #ctypedef default_error_checker[quad] error_checker_type 
-    #cdef make_controlled(quad, quad, error_stepper_type)
-    #ctypedef controlled_runge_kutta[error_stepper_type,error_checker_type,initially_resizer] controlled_stepper_type
-    #cdef size_t integrate_adaptive(controlled_stepper_type, CRHS, vectq&, quad, quad, quad) except 0
     pass
     
 
@@ -99,8 +95,8 @@ cdef class ODE:
     cdef quad _dt
     cdef unsigned int _n
     cdef unsigned int _n_vec
-    cdef CRHS* _crhs
-    cdef bulirsch_stoer_dense_out[vectq,quad]* _stepper
+    cdef CRHS[quad]* _crhs
+    cdef bulirsch_stoer[vectq,quad]* _stepper
     cdef object pyrhs
     cdef int symmetric
     cdef quad delta
@@ -111,7 +107,7 @@ cdef class ODE:
         cdef unsigned int i, j
         if not isinstance(rhs,RHS):
             raise ValueError("rhs must be an instance of the RHS class; try PyRHS")
-        self._crhs = new CRHS(class_callback, <void*>rhs)
+        self._crhs = new CRHS[quad](&class_callback, <void*>rhs)
         self.pyrhs = rhs # prevent freeing
 
         self._n = len(initial_value)
@@ -148,22 +144,26 @@ cdef class ODE:
                                     +self.delta*py_to_quad(vectors[i][j]))
         self._t = py_to_quad(t)
         self._dt = py_to_quad(initial_dt)
-        self._stepper = new bulirsch_stoer_dense_out(
+        self._stepper = new bulirsch_stoer[vectq,quad](
                 py_to_quad(atol), py_to_quad(rtol),
-                py_to_quad(1), py_to_quad(1),
-                True)
-        if self._dt==0:
-            self._dt = 1e-4
-        self._stepper.initialize(self._x0[0], self._t, self._dt)
+                py_to_quad(1), py_to_quad(1))
     
     cpdef integrate_to(self, t):
         cdef quad _t
         _t = py_to_quad(t)
-        integrate_to_with_delay(self._crhs[0], 
+
+        if _t==self._t:
+            return
+
+        if self._dt==0:
+            self._dt = 1e-4*(_t-self._t)
+
+        integrate_to(self._crhs[0], 
                 self._stepper[0],
                 self._x[0],
+                self._t,
+                self._dt,
                 _t)
-        self._t = _t
 
     def __dealloc__(self):
         del self._x
@@ -210,7 +210,7 @@ cdef class ODE:
         def __get__(self):
             return self.pyrhs.n_evaluations
 
-cdef void class_callback(vectq*x, vectq*dxdt, quad t, void*arg) except *:
+cdef void class_callback(vector[quad]*x, vector[quad]*dxdt, quad t, void*arg) except *:
     rhs = (<RHS>arg)
     rhs._evaluate(x,dxdt,t)
 cdef class RHS:
@@ -257,137 +257,3 @@ cdef class HarmonicRHS(RHS):
 
 
 
-###########################################################################
-
-# units are days, light-seconds, and solar masses
-cdef quad G_mks = py_to_quad(6.67398e-11) # m**3 kg**(-1) s**(-2)
-cdef quad c = py_to_quad(299792458) # m/s
-cdef quad M_sun = py_to_quad(1.9891e30) # kg
-cdef quad G = G_mks * c**(-3) * M_sun * 86400**2
-cdef quad c3o2 = py_to_quad(3)/2
-
-@cython.boundscheck(False)
-cdef void kepler_inner(quad*x, quad*dxdt, quad t):
-    cdef unsigned int n,i,j,k
-    cdef quad m_i, m_j
-    cdef quad x_i, y_i, z_i
-    cdef quad x_j, y_j, z_j
-    cdef quad r2_ij, cst
-
-    for i in range(21):
-        dxdt[i] = 0
-
-    for i in range(3):
-        for k in range(3):
-            dxdt[7*i+k] = x[7*i+k+3]
-        m_i = x[7*i+6]
-        for j in range(i):
-            m_j = x[7*j+6]
-            
-            r2_ij = 0
-            for k in range(3):
-                r2_ij += cpowq(x[7*j+k]-x[7*i+k],2)
-
-            for k in range(3):
-                cst = G*(x[7*j+k]-x[7*i+k])*cpowq(r2_ij,-c3o2)
-                dxdt[7*i+k+3] +=  m_j*cst
-                dxdt[7*j+k+3] += -m_i*cst
-
-cdef class KeplerRHS(RHS):
-    cdef int _evaluate(self, vectq*x, vectq*dxdt, quad t) except -1:
-        cdef quad x_r[21]
-        cdef quad dxdt_r[21]
-        cdef unsigned int n,i,j,k
-        cdef quad m_i, m_j
-        cdef quad x_i, y_i, z_i
-        cdef quad x_j, y_j, z_j
-        cdef quad r2_ij, cst
-
-        if x.size()>=21:
-            for j in range(x.size()//21):
-                for i in range(21):
-                    x_r[i] = x.at(i+21*j)
-                kepler_inner(x_r, dxdt_r, t)
-                for i in range(21):
-                    vectq_set(dxdt, i+21*j, dxdt_r[i])
-        else:
-            for i in range(x.size()):
-                vectq_set(dxdt, i, 0)
-
-            for i in range(x.size()//7):
-                for k in range(3):
-                    vectq_set(dxdt, 7*i+k, x.at(7*i+k+3))
-                m_i = x.at(7*i+6)
-                for j in range(i):
-                    m_j = x.at(7*j+6)
-                    
-                    r2_ij = 0
-                    for k in range(3):
-                        r2_ij += cpowq(x.at(7*j+k)-x.at(7*i+k),2)
-
-                    for k in range(3):
-                        cst = G*(x.at(7*j+k)-x.at(7*i+k))*cpowq(r2_ij,-c3o2)
-                        vectq_set(dxdt, 7*i+k+3,
-                                dxdt.at(7*i+k+3)+m_j*cst)
-                        vectq_set(dxdt, 7*j+k+3,
-                                dxdt.at(7*j+k+3)-m_i*cst)
-        return 0
-cdef class KeplerRHSDoppler(RHS):
-    cdef int _evaluate(self, vectq*x, vectq*dxdt, quad t) except -1:
-        cdef quad x_r[21]
-        cdef quad dxdt_r[21]
-        cdef unsigned int i,j
-        cdef quad vz
-
-        for j in range(x.size()//21):
-            for i in range(21):
-                x_r[i] = x.at(i+21*j)
-            kepler_inner(x_r, dxdt_r, t)
-            vz = x_r[2]
-            for i in range(21):
-                dxdt_r[i]  /= (1+vz)
-            for i in range(21):
-                vectq_set(dxdt, i+21*j, dxdt_r[i])
-
-        return 0
-cdef class KeplerRHSRelativity(RHS):
-    cdef int special, general
-    cdef quad c2, G
-    def __init__(self, special=True, general=True):
-        self.special = special
-        self.general = general
-        self.c2 = 86400*86400
-        self.G = 36779.59091405234
-    cdef int _evaluate(self, vectq*x, vectq*dxdt, quad t) except -1:
-        cdef quad x_r[21]
-        cdef quad dxdt_r[21]
-        cdef unsigned int i
-        cdef quad slowing
-        cdef quad temp, r, v2
-
-        for i in range(21):
-            x_r[i] = x.at(i)
-        kepler_inner(x_r, dxdt_r, t)
-        for i in range(21):
-            vectq_set(dxdt, i, dxdt_r[i])
-        slowing = 0
-        if self.special:
-            v2 = x_r[3]*x_r[3]+x_r[4]*x_r[4]+x_r[5]*x_r[5]
-            slowing = cexpm1q(-0.5*clog1pq(-v2/self.c2))
-        if self.general:
-            r = (x_r[7]-x_r[0])*(x_r[7]-x_r[0])
-            r += (x_r[8]-x_r[1])*(x_r[8]-x_r[1])
-            r += (x_r[9]-x_r[2])*(x_r[9]-x_r[2])
-            r = csqrtq(r)
-            temp = cexpm1q(-0.5*clog1pq(-2*self.G*x_r[13]/(r*self.c2)))
-            slowing = slowing + temp + slowing*temp
-
-            r = (x_r[14]-x_r[0])*(x_r[14]-x_r[0])
-            r += (x_r[15]-x_r[1])*(x_r[15]-x_r[1])
-            r += (x_r[16]-x_r[2])*(x_r[16]-x_r[2])
-            r = csqrtq(r)
-            temp = cexpm1q(-0.5*clog1pq(-2*self.G*x_r[20]/(r*self.c2)))
-            slowing = slowing + temp + slowing*temp
-
-        vectq_set(dxdt,21,slowing)
-        return 0
