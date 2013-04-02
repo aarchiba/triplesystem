@@ -100,7 +100,8 @@ def remove_trend(vec, mjds, tel_list, tels, uncerts=None,
             vec/uncerts)
     return vec-np.dot(non_orbital_basis,x)
 
-def compute_orbit(parameters, times, with_derivatives=False, epoch=0, tol=1e-16, delta=1e-6,
+def compute_orbit(parameters, times, with_derivatives=False, epoch=0, 
+        tol=1e-16, delta=1e-6, symmetric=False,
         shapiro=False, special=False, general=False, use_quad=False):
     # FIXME: deal with epoch not at the beginning
 
@@ -109,7 +110,8 @@ def compute_orbit(parameters, times, with_derivatives=False, epoch=0, tol=1e-16,
     parameters = np.asarray(parameters)
     times = np.asarray(times)
 
-    o = dict(parameters=parameters, times=times, tol=tol,
+    o = dict(parameters=parameters, times=times, 
+            tol=tol, delta=delta, symmetric=symmetric,
             shapiro=shapiro, special=special, general=general,
             use_quad=use_quad)
 
@@ -139,11 +141,13 @@ def compute_orbit(parameters, times, with_derivatives=False, epoch=0, tol=1e-16,
     shapiro_delays = []
     if with_derivatives:
         derivatives = []
+        derivative_errors = []
         O = quad_integrate.ODE(rhs,
                initial_values, 0,
                rtol = tol, atol = tol,
                vectors = vectors,
                delta = delta,
+               symmetric = symmetric,
                use_quad = use_quad)
         for t in times:
             O.integrate_to(t)
@@ -152,11 +156,16 @@ def compute_orbit(parameters, times, with_derivatives=False, epoch=0, tol=1e-16,
             derivatives.append(dx[2,:].copy())
             if special or general:
                 derivatives[-1] += 86400*dx[21,:]
+            if symmetric:
+                derivative_errors.append(O.dx_error[2,:].copy())
+                if special or general:
+                    derivative_errors[-1] += 86400*O.dx_error[21,:]
             if shapiro:
                 s, d = shapiros(O.x, with_derivatives=True)
                 derivatives[-1] += np.dot(d, dx)
                 shapiro_delays.append(s)
         derivatives = np.array(derivatives)
+        derivative_errors = np.array(derivatives)
     else:
         O = quad_integrate.ODE(rhs,
                initial_values, 0,
@@ -175,6 +184,8 @@ def compute_orbit(parameters, times, with_derivatives=False, epoch=0, tol=1e-16,
     o["delays"] = states[:,2].copy()
     if with_derivatives:
         o["derivatives"] = derivatives
+        if symmetric:
+            o["derivative_errors"] = derivative_errors
     if special or general:
         o["einstein_delays"] = states[:,21]
         o["delays"] += 86400*states[:,21]

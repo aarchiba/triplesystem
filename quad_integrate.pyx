@@ -229,7 +229,6 @@ cdef class ODE:
                         self._dt,
                         _t)
             else:
-                raise ValueError
                 integrate_to(self._crhs[0], 
                         self._stepper[0],
                         self._x[0],
@@ -316,6 +315,49 @@ cdef class ODE:
                 del row_l
 
             return result
+    property dx_error:
+        def __get__(self):
+            cdef np.ndarray[DTYPE_t, ndim=2] result = np.empty((self._n,self._n_vec),dtype=DTYPE)
+            cdef np.ndarray[DTYPE_t, ndim=2] result_a = np.empty((self._n,self._n_vec),dtype=DTYPE)
+            cdef vectq *row
+            cdef vectl *row_l
+            cdef unsigned int i, j
+            cdef quad deriv, l, r
+            cdef longdouble deriv_l, l_l, r_l
+
+            if not self.symmetric:
+                raise ValueError("Error estimates on the derivative only available when using symmetric differences")
+
+            if self.use_quad:
+                row = new vectq(self._n, 0)
+                for i in range(self._n_vec):
+                    for j in range(self._n):
+                        l = self._x.at((2*i+1)*self._n+j)
+                        r = self._x.at((2*i+2)*self._n+j)
+                        deriv = (r-l)/(2*self.delta)
+                        vectq_set(row, j, deriv)
+                    result[:,i] = vectq_to_array(row)
+                for i in range(self._n_vec):
+                    for j in range(self._n):
+                        l = self._x.at(j)
+                        r = self._x.at((i+1)*self._n+j)
+                        deriv = (r-l)/self.delta
+                        vectq_set(row, j, deriv)
+                    result_a[:,i] = vectq_to_array(row)
+                del row
+            else:
+                raise NotImplementedError
+                row_l = new vectl(self._n, 0)
+                for i in range(self._n_vec):
+                    for j in range(self._n):
+                        l_l = self._x_l.at((2*i+1)*self._n+j)
+                        r_l = self._x_l.at((2*i+2)*self._n+j)
+                        deriv_l = (r_l-l_l)/(2*self.delta_l)
+                        vectl_set(row_l, j, deriv_l)
+                    result[:,i] = vectl_to_array(row_l)
+                del row_l
+
+            return result_a-result
     property t:
         def __get__(self):
             if self.use_quad:
