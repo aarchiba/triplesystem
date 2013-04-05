@@ -45,7 +45,6 @@ def kepler_2d(a, pb, eps1, eps2, t):
     axis. (Which will be the ascending node in a three-dimensional
     model.)
     """
-    # FIXME: at t=0 always at periastron, want on x axis
     if eps1==0 and eps2==0:
         eps1=1e-50
     e = np.hypot(eps1, eps2)
@@ -191,6 +190,16 @@ def inverse_kepler_2d(xv,m):
 
     return a, pb, eps1, eps2, (mean_anomaly-mean_anomaly_0)*pb/(2*np.pi)
     #mean_anomaly*pb/(2*np.pi)
+
+def btx_parameters(asini, pb, eps1, eps2, tasc):
+    e = np.hypot(eps1,eps2)
+    om = np.arctan2(eps2,eps1) # FIXME: these are exchanged relative to TEMPO's ELL1
+    true_anomaly = +om # True anomaly at the ascending node
+    eccentric_anomaly = np.arctan2(np.sqrt(1-e**2)*np.sin(true_anomaly),
+                                   e+np.cos(true_anomaly))
+    mean_anomaly = eccentric_anomaly - e*np.sin(eccentric_anomaly)
+    t0 = tasc-mean_anomaly*pb/(2*np.pi)
+    return asini, pb, e, om, t0
 
 def mass(a, pb):
     """Compute the mass of a particle in a Kepler orbit

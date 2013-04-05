@@ -101,8 +101,8 @@ def remove_trend(vec, mjds, tel_list, tels, uncerts=None,
     return vec-np.dot(non_orbital_basis,x)
 
 def compute_orbit(parameters, times, with_derivatives=False, epoch=0, 
-        tol=1e-16, delta=1e-6, symmetric=False,
-        shapiro=False, special=False, general=False, use_quad=False):
+        tol=1e-16, delta=1e-12, symmetric=False,
+        shapiro=True, special=True, general=True, use_quad=False):
     # FIXME: deal with epoch not at the beginning
 
     start = time.time()
@@ -238,7 +238,10 @@ def shapiros(states, with_derivatives=False):
                 shapiro_delay(states[...,:7],states[...,14:21]))
 
 def fmt(x, u):
-    
+    if u<0:
+        raise ValueError("Uncertainty %g < 0" % u)
+    elif u==0:
+        return "%g" % x
     exponent_number = np.floor(np.log10(np.abs(x)))
     exponent_error = np.floor(np.log10(u))
     if u*10**(-exponent_error)>=2:
