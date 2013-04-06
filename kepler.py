@@ -17,6 +17,7 @@ def true_from_eccentric(e, eccentric_anomaly):
             (np.sqrt(1-e**2)*(1-e*np.cos(eccentric_anomaly))))
     true_anomaly_prime = (np.sqrt(1-e**2)/(1-e*np.cos(eccentric_anomaly)))
     return true_anomaly, true_anomaly_de, true_anomaly_prime
+
 def eccentric_from_mean(e, mean_anomaly):
     eccentric_anomaly = newton(
             lambda E: E-e*np.sin(E)-mean_anomaly,
@@ -194,7 +195,7 @@ def inverse_kepler_2d(xv,m):
 def btx_parameters(asini, pb, eps1, eps2, tasc):
     e = np.hypot(eps1,eps2)
     om = np.arctan2(eps2,eps1) # FIXME: these are exchanged relative to TEMPO's ELL1
-    true_anomaly = +om # True anomaly at the ascending node
+    true_anomaly = -om # True anomaly at the ascending node
     eccentric_anomaly = np.arctan2(np.sqrt(1-e**2)*np.sin(true_anomaly),
                                    e+np.cos(true_anomaly))
     mean_anomaly = eccentric_anomaly - e*np.sin(eccentric_anomaly)

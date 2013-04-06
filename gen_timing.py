@@ -22,5 +22,11 @@ for i in range(len(times)):
     s = o["states"][i]
     cm_i = (s[:6]*s[6]+s[7:13]*s[13])/(s[6]+s[13])
 
-    print "\t".join(repr(p) for p in (times[i]+mjdbase, asini_i, pb_i, e_i, om_i, t0_i+mjdbase, asini_o, pb_o, e_o, om_o, t0_o+mjdbase, cm_i[2], cm_i[5]))
+    t0_i = (t0_i-times[i])%pb_i + times[i]+mjdbase
+    t0_0 = (t0_o-times[i])%pb_o + times[i]+mjdbase
+    print "\t".join(repr(p) for p in (
+        times[i]+mjdbase, 
+        asini_i, pb_i, e_i, om_i, t0_i, 
+        asini_o, pb_o, e_o, om_o, t0_o, 
+        cm_i[2], cm_i[5]))
 

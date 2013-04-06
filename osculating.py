@@ -7,10 +7,12 @@ import numpy as np
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument("MJD", help="Modified Julian Day to center the osculating orbit on (actually, use the nearest orbit in the data file)", type=float)
-parser.add_argument("--filename", help="File listing osculating orbits", default="osculating.txt")
-parser.add_argument("--fixedbtx", help="BTX model includes Doppler correction", action="store_true")
-
+parser.add_argument("MJD", 
+    help="Modified Julian Day to center the osculating orbit on (actually, use the nearest orbit in the data file)", type=float)
+parser.add_argument("--filename", 
+    help="File listing osculating orbits", default="osculating.txt")
+parser.add_argument("--fixedbtx", 
+    help="BTX model includes Doppler correction", action="store_true")
 
 args = parser.parse_args()
 
@@ -28,7 +30,7 @@ if args.fixedbtx:
 else:
     d['model'] = "BT1P"
     d['t0_i'] = d['t0_i']+d['z_i']/86400
-    d['pb_i'] = d['pb_i']/(1+d['vz_i']/86400.)
+    d['pb_i'] = d['pb_i']*(1+d['vz_i']/86400.)
 
 template = """PSR              J0337+17    
 RAJ      03:37:43.82100000
