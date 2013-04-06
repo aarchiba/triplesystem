@@ -558,8 +558,8 @@ def inverse_kepler_three_body_measurable(state, t):
 
     asini_i = a_i*np.sin(i_i)
     acosi_i = a_i*np.cos(i_i)
-    asini_o = a_i*np.sin(i_o)
-    acosi_o = a_i*np.cos(i_o)
+    asini_o = a_o*np.sin(i_o)
+    acosi_o = a_o*np.cos(i_o)
     delta_lan = lan_o - lan_i
     tasc_i = tasc_i + t
     tasc_o = tasc_o + t

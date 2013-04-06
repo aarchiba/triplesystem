@@ -69,29 +69,77 @@ best_errors = [
 	0.001609442571711061 ,
 	7.981798704760887e-06 ,
 ]
-
+best_parameters_nogr = [
+	1.217529967691550754 ,
+	1.629401735908281567 ,
+	-9.1680933187314077105e-05 ,
+	0.00068607294788486786044 ,
+	0.4074892430788351937 ,
+	1.4861853088300347585 ,
+	0.13744418603049468959 ,
+	74.672663767844384898 ,
+	327.25756096585252719 ,
+	-0.0034618550185082725042 ,
+	0.035186307687828952724 ,
+	313.93597677179654973 ,
+	91.202189778972841357 ,
+	-4.4596707010768933897e-05 ,
+]
+best_errors_nogr = [
+	1.8624739061394744e-08 ,
+	3.625137710539212e-10 ,
+	1.9190728493949218e-08 ,
+	1.673908407209016e-08 ,
+	9.816045154137255e-09 ,
+	3.5860679776065874e-06 ,
+	1.7327413665307784e-06 ,
+	1.2327858353102708e-07 ,
+	4.1809524403587833e-07 ,
+	9.172363390894159e-10 ,
+	6.199662972285706e-10 ,
+	3.871106137895912e-07 ,
+	0.0017795929143580116 ,
+	7.70027304890772e-06 ,
+]
+def trend_matrix(mjds, tel_list, tels, 
+    P=True, Pdot=True, jumps=True,
+    position=False, proper_motion=False, parallax=False,
+    f0 = 365.9533436144258189, pepoch = 56100, mjdbase = 55920):
+    year_length = 365.2425
+    
+    non_orbital_basis = [np.ones_like(mjds)]
+    names = ["const"]
+    if P:
+        non_orbital_basis.append(f0**(-1)*((mjds-pepoch)*86400))
+        names.append("f0error")
+    if Pdot:
+        non_orbital_basis.append(f0**(-1)*0.5*((mjds-pepoch)*86400)**2)
+        names.append("f1error")
+    if jumps:
+        non_orbital_basis.append(np.arange(1,len(tel_list))[:,None]==tels[None,:])
+        names += ["j_%s" % t for t in tel_list[1:]]
+    if position:
+        non_orbital_basis.extend([np.cos(2*np.pi*mjds/year_length),
+                                  np.sin(2*np.pi*mjds/year_length)])
+        names += ["pos_cos", "pos_sin"]
+    if proper_motion:
+        non_orbital_basis.extend([(mjds-pepoch)*np.cos(2*np.pi*mjds/year_length),
+                                  (mjds-pepoch)*np.sin(2*np.pi*mjds/year_length)])
+        names += ["pm_cos", "pm_sin"]
+    if parallax:
+        non_orbital_basis.extend([np.cos(4*np.pi*mjds/year_length),
+                                  np.sin(4*np.pi*mjds/year_length)])
+        names += ["px_cos", "px_sin"]
+    non_orbital_basis = np.vstack(non_orbital_basis).T
+    return non_orbital_basis, names
+    
 def remove_trend(vec, mjds, tel_list, tels, uncerts=None,
     P=True, Pdot=True, jumps=True,
     position=False, proper_motion=False, parallax=False):
     year_length = 365.2425
     
-    non_orbital_basis = [np.ones_like(mjds)]
-    if P:
-        non_orbital_basis.append(mjds)
-    if Pdot:
-        non_orbital_basis.append(mjds**2/2.)
-    if jumps:
-        non_orbital_basis.append(np.arange(1,len(tel_list))[:,None]==tels[None,:])
-    if position:
-        non_orbital_basis.extend([np.cos(2*np.pi*mjds/year_length),
-                                  np.sin(2*np.pi*mjds/year_length)])
-    if proper_motion:
-        non_orbital_basis.extend([mjds*np.cos(2*np.pi*mjds/year_length),
-                                  mjds*np.sin(2*np.pi*mjds/year_length)])
-    if parallax:
-        non_orbital_basis.extend([np.cos(4*np.pi*mjds/year_length),
-                                  np.sin(4*np.pi*mjds/year_length)])
-    non_orbital_basis = np.vstack(non_orbital_basis).T
+    non_orbital_basis, names = trend_matrix(mjds, tel_list, tels, 
+            P, Pdot, jumps, position, proper_motion, parallax)
     if uncerts is None:
         x, res, rk, s = scipy.linalg.lstsq(non_orbital_basis, vec)
     else:
