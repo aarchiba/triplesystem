@@ -27,15 +27,18 @@ d = dict(zip(col_names,osculating_parameters[i]))
 
 if args.fixedbtx:
     d['model'] = "BTX"
+    d['omdot'] = 0
 else:
-    d['model'] = "BT1P"
+    d['model'] = "BTX"
     d['t0_i'] = d['t0_i']+d['z_i']/86400
     d['pb_i'] = d['pb_i']*(1+d['vz_i']/86400.)
     # FIXME: can OMDOT help? act like T0dot, modified by vz_i
+    t0dot = d['vz_i']/86400
+    d['omdot_i'] = 360*t0dot*365.2425
 
 template = """PSR              J0337+17    
-RAJ      03:37:43.82100000
-DECJ      17:15:14.8200000
+RAJ      03:37:43.82589000
+DECJ      17:15:14.8281000
 F0                  {f0!r}
 F1                  {f1!r}
 PEPOCH        56100.000000
@@ -53,6 +56,7 @@ A1             {asini_i!r}
 E                  {e_i!r}
 T0                {t0_i!r}
 OM                {om_i!r}
+OMDOT          {omdot_i!r}
 PB                {pb_i!r}
 A1_2           {asini_o!r}
 E_2                {e_o!r}
