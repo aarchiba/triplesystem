@@ -19,7 +19,8 @@ x, rk, resids, s = scipy.linalg.lstsq(lin/uncerts[:,None]/ps[None,:],(odelay-del
 lin_parameters = -x/ps
 
 L = lin[:,[lin_names.index("const"),lin_names.index("f0error")]]
-x, rk, resids, s = scipy.linalg.lstsq(L/uncerts[:,None],(o_fit["einstein_delays"])/uncerts)
+x, rk, resids, s = scipy.linalg.lstsq(L/uncerts[:,None],  
+        (86400*o_fit["einstein_delays"])/uncerts)
 f0_einstein = x[1]
 
 f0 += -lin_parameters[lin_names.index("f0error")]-f0_einstein
@@ -43,6 +44,7 @@ for i in range(len(times)):
     cm_i = (s[:6]*s[6]+s[7:13]*s[13])/(s[6]+s[13])
 
     t0_i = (t0_i-times[i]+pb_i/2)%pb_i -pb_i/2 + times[i]+mjdbase
+    assert abs(t0_i-(times[i]+mjdbase))<=pb_i/2
     t0_o = (t0_o-times[i]+pb_o/2)%pb_o -pb_o/2 + times[i]+mjdbase
     print "\t".join(repr(p) for p in (
         times[i]+mjdbase, f0, f1,

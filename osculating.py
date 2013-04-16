@@ -20,7 +20,7 @@ MJD = float(args.MJD)
 
 osculating_parameters = np.loadtxt(args.filename)
 i = np.searchsorted(osculating_parameters[:,0],MJD)
-if osculating_parameters[i+1,0]-MJD>MJD-osculating_parameters[i,0]:
+if osculating_parameters[i+1,0]-MJD<MJD-osculating_parameters[i,0]:
     i += 1
 col_names = open(args.filename).readline().split()[1:]
 d = dict(zip(col_names,osculating_parameters[i]))

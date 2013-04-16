@@ -48,16 +48,26 @@ lin, lin_names = threebody.trend_matrix(times, None, None, jumps=False)
 lindelay = np.dot(lin,lin_parameters[:len(lin_names)])
 
 with open("fake.tim","wt") as tim:
-    with open("fake.pulses","wt") as pulses:
-        for i in range(len(o["times"])):
+    with open("fake-t2.tim","wt") as tim2:
+        tim2.write("FORMAT 1\n")
+        with open("fake.pulses","wt") as pulses:
+            for i in range(len(o["times"])):
 
-            t = o["times"][i]
-            d = o["delays"][i] + lindelay[i]
-            t += d/86400
-            # now t is a barycentered arrival time
-            toaline = ("@             999999.999 %05d.%s%9.2f\n" %
-                (mjdbase+int(np.floor(t)),
-                 ("%.13f" % (t-np.floor(t)))[2:15],
-                 rms*1e6))
-            tim.write(toaline)
-            pulses.write("%d\n" % pulse)
+                t = o["times"][i]
+                pulse = np.round(phase(t))
+                d = o["delays"][i] + lindelay[i]
+                t += d/86400
+                # now t is a barycentered arrival time
+                toaline = ("@             999999.999 %05d.%s%9.2f\n" %
+                    (mjdbase+int(np.floor(t)),
+                     ("%.13f" % (t-np.floor(t)))[2:15],
+                     rms*1e6))
+                tim.write(toaline)
+                pulses.write("%d\n" % pulse)
+
+                toaline2 = ("fake 999999.999 %05d.%s %9.2f @ -npulse %d\n" %
+                    (mjdbase+int(np.floor(t)),
+                     ("%.13f" % (t-np.floor(t)))[2:15],
+                     rms*1e6,
+                     pulse))
+                tim2.write(toaline2)
