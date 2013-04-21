@@ -9,10 +9,98 @@ extern "C" {
 #include <quadmath.h>
 }
 
-typedef __float128 quad;
+#define FLT128_NAN (((__float128)0)/((__float128)0))
+class quad { 
+    // GCC has a bug where __float128 does not produce RTTI
+    // This breaks the dense output integrators
+    // So here's a thin wrapper
+    public:
+        __float128 v;
+        quad() : v(FLT128_NAN) {};
+        quad(__float128 val) : v(val) {};
+        quad(const quad& val) : v(val.v) {};
+        operator __float128() { return v; };
+        const quad& operator +=(const quad&e) { v+=e.v; return *this; };
+        const quad& operator -=(const quad&e) { v-=e.v; return *this; };
+        const quad& operator *=(const quad&e) { v*=e.v; return *this; };
+        const quad& operator /=(const quad&e) { v/=e.v; return *this; };
+        //quad operator-() { return quad(-v); };
+};
 typedef vector<quad> vectq;
 typedef vector<long double> vectl;
 
+// blerg. C++ type inference is *terrible*.
+quad operator+(const quad&b, const quad&e) { return quad(b.v+e.v); }
+quad operator+(const quad&b, const int&e) { return quad(b.v+e); }
+quad operator+(const int&b, const quad&e) { return quad(b+e.v); }
+quad operator+(const quad&b, const double&e) { return quad(b.v+e); }
+quad operator+(const double&b, const quad&e) { return quad(b+e.v); }
+
+quad operator-(const quad&b, const quad&e) { return quad(b.v-e.v); }
+quad operator-(const int&b, const quad&e) { return quad(b-e.v); }
+quad operator-(const quad&b, const int&e) { return quad(b.v-e); }
+quad operator-(const quad&b, const float&e) { return quad(b.v-e); }
+
+quad operator*(const quad&b, const quad&e) { return quad(b.v*e.v); }
+quad operator*(const quad&b, const int&e) { return quad(b.v*e); }
+quad operator*(const int&b, const quad&e) { return quad(b*e.v); }
+quad operator*(const unsigned int&b, const quad&e) { return quad(b*e.v); }
+quad operator*(const double&b, const quad&e) { return quad(b*e.v); }
+
+quad operator/(const quad&b, const quad&e) { return quad(b.v/e.v); }
+quad operator/(const quad&b, const double&e) { return quad(b.v/e); }
+quad operator/(const double&b, const quad&e) { return quad(b/e.v); }
+quad operator/(const quad&b, const float&e) { return quad(b.v/e); }
+quad operator/(const float&b, const quad&e) { return quad(b/e.v); }
+quad operator/(const quad&b, const int&e) { return quad(b.v/e); }
+quad operator/(const int&b, const quad&e) { return quad(b/e.v); }
+quad operator/(const quad&b, const long unsigned int&e) { return quad(b.v/e); }
+quad operator/(const long unsigned int&b, const quad&e) { return quad(b/e.v); }
+
+quad operator-(const quad&b) { return quad(-b.v); }
+
+quad operator<(const quad&b, const quad&e) { return b.v<e.v; }
+quad operator>(const quad&b, const quad&e) { return b.v>e.v; }
+quad operator>=(const quad&b, const quad&e) { return b.v>=e.v; }
+quad operator<=(const quad&b, const quad&e) { return b.v<=e.v; }
+quad operator<(const unsigned int&b, const quad&e) { return b<e.v; }
+quad operator>(const unsigned int&b, const quad&e) { return b>e.v; }
+quad operator>=(const unsigned int&b, const quad&e) { return b>=e.v; }
+quad operator<=(const unsigned int&b, const quad&e) { return b<=e.v; }
+quad operator<(const quad&b, const unsigned int&e) { return b.v<e; }
+quad operator>(const quad&b, const unsigned int&e) { return b.v>e; }
+quad operator>=(const quad&b, const unsigned int&e) { return b.v>=e; }
+quad operator<=(const quad&b, const unsigned int&e) { return b.v<=e; }
+quad operator<(const int&b, const quad&e) { return b<e.v; }
+quad operator>(const int&b, const quad&e) { return b>e.v; }
+quad operator>=(const int&b, const quad&e) { return b>=e.v; }
+quad operator<=(const int&b, const quad&e) { return b<=e.v; }
+quad operator<(const quad&b, const int&e) { return b.v<e; }
+quad operator>(const quad&b, const int&e) { return b.v>e; }
+quad operator>=(const quad&b, const int&e) { return b.v>=e; }
+quad operator<=(const quad&b, const int&e) { return b.v<=e; }
+quad operator<(const double&b, const quad&e) { return b<e.v; }
+quad operator>(const double&b, const quad&e) { return b>e.v; }
+quad operator>=(const double&b, const quad&e) { return b>=e.v; }
+quad operator<=(const double&b, const quad&e) { return b<=e.v; }
+quad operator<(const quad&b, const double&e) { return b.v<e; }
+quad operator>(const quad&b, const double&e) { return b.v>e; }
+quad operator>=(const quad&b, const double&e) { return b.v>=e; }
+quad operator<=(const quad&b, const double&e) { return b.v<=e; }
+quad operator<(const float&b, const quad&e) { return b<e.v; }
+quad operator>(const float&b, const quad&e) { return b>e.v; }
+quad operator>=(const float&b, const quad&e) { return b>=e.v; }
+quad operator<=(const float&b, const quad&e) { return b<=e.v; }
+quad operator<(const quad&b, const float&e) { return b.v<e; }
+quad operator>(const quad&b, const float&e) { return b.v>e; }
+quad operator>=(const quad&b, const float&e) { return b.v>=e; }
+quad operator<=(const quad&b, const float&e) { return b.v<=e; }
+
+quad operator==(const quad&b, const quad&e) { return b.v==e.v; }
+quad operator==(const quad&b, const int&e) { return b.v==e; }
+quad operator==(const int&b, const quad&e) { return b==e.v; }
+quad operator==(const quad&b, const double&e) { return b.v==e; }
+quad operator==(const double&b, const quad&e) { return b==e.v; }
 
 namespace std {
     quad pow(quad b, quad e) {
@@ -22,10 +110,10 @@ namespace std {
         return (a<b) ? b : a;
     };
     quad fabs(quad a) {
-        return (a<0) ? -a : a;
+        return (a<(quad)0) ? -a.v : a.v;
     };
     quad abs(quad a) {
-        return (a<0) ? -a : a;
+        return (a<(quad)0) ? -a.v : a.v;
     };
     quad ceil(quad b) {
         return ceilq(b);
@@ -64,7 +152,7 @@ namespace std {
         return sqrtq(b);
     }
     ostream& operator<<(ostream& ost, const quad&q) {
-        return ost<<((long double)q);
+        return ost<<((long double)q.v);
     }
     istream& operator>>(istream& ist, quad&q) {
         long double qq;
@@ -264,33 +352,41 @@ class cKeplerRHS {
             (*this)(*x, *dxdt, t);
         }
 };
+template<class num>
+num shapiro_delay(const vector<num>&x) { // in days
+    const num c = 86400; // lt-s per day
+    const num cst = -2*G/(c*c*c);
+    num d = 0;
+    for(int k=1;k<3;k++) {
+        num delta_z, dr2=0;
+        for (int i=0;i<3;i++) {
+            delta_z = (x[i+7*k]-x[i]);
+            dr2 += delta_z*delta_z;
+        }
+        d += cst*x[7*k+6]*log(delta_z+sqrt(dr2));
+    }
+    return d;
+}
 
 class WrongWay {
 };
 
-/* Problem: GCC doesn't provide typeinfo for __float128 and dense output needs it for some reason
 template<class num>
-void integrate_to_with_delay(CRHS<quad> rhs,
-        bulirsch_stoer_dense_out<vector<quad>, quad> &stepper,
-        vector<quad> &x,
-        quad t) {
-    while (stepper.current_time()<t) {
-        stepper.do_step(rhs);
-    }
-    if (stepper.current_time()==t) {
-        // This may be the first step; can't calculate state
-        // Or we may have gotten lucky and don't need to bother interpolating
-        x = stepper.current_state();
-    } else if (stepper.previous_time()<=t) {
-        stepper.calc_state(t, x);
-    } else {
-        // Trying to go the wrong way? Something is wrong.
-        // How do C++ exceptions work?
-        // How does Cython respond to C++ exceptions?
-        //throw WrongWay();
-    }
+void do_step_dense(cKeplerRHS<num> rhs,
+        bulirsch_stoer_dense_out<vector<num>, num> &stepper) {
+    stepper.do_step(rhs);
 };
-*/
+template<class num>
+void current_state(bulirsch_stoer_dense_out<vector<num>, num> &stepper,
+        vector<num>&x) {
+    x = stepper.current_state();
+};
+template<class num>
+void previous_state(bulirsch_stoer_dense_out<vector<num>, num> &stepper,
+        vector<num>&x) {
+    x = stepper.previous_state();
+};
+
 template<class num, class System>
 void integrate_to(System rhs,
         bulirsch_stoer<vector<num>, num> &stepper,

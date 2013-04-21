@@ -40,13 +40,27 @@ cdef extern from "extra.hpp":
         cKeplerRHS(int special, int general, long long&evals) except +
         void evaluate(vector[num] *x, vector[num] *dxdt, num t) except +
         long long n_evaluations()
+    cdef longdouble shapiro_delay(vectl&x)
 
-    #cdef cppclass bulirsch_stoer_dense_out[vect,num]:
-    #    bulirsch_stoer_dense_out(num, num, num, num, bool)
-    #    void initialize(vect&x0, num&t0, num&dt0)
-    #void integrate_to_with_delay(CRHS[quad]&rhs, 
-    #        bulirsch_stoer_dense_out[vectq,quad]&stepper,
-    #        vectq&x, quad t)
+    cdef cppclass bulirsch_stoer_dense_out[vect,num]:
+        bulirsch_stoer_dense_out(num, num, num, num, bool)
+        void initialize(vect&x0, num&t0, num&dt0)
+        void calc_state(num&t, vect&x)
+        vect&current_state()
+        vect&previous_state()
+        num current_time()
+        num previous_time()
+    #void do_step_dense(CRHS[quad]&rhs, 
+    #        bulirsch_stoer_dense_out[vectq,quad]&stepper)
+    void do_step_dense(CRHS[longdouble]&rhs, 
+            bulirsch_stoer_dense_out[vectl,longdouble]&stepper)
+    #void current_state(bulirsch_stoer_dense_out[vectq,quad]&stepper,
+    #        vectq&x)
+    void previous_state(bulirsch_stoer_dense_out[vectl,longdouble]&stepper,
+            vectl&x)
+    void current_state(bulirsch_stoer_dense_out[vectl,longdouble]&stepper,
+            vectl&x)
+
     cdef cppclass bulirsch_stoer[vect,num]:
         bulirsch_stoer(num, num, num, num) except +
     void integrate_to(cKeplerRHS[longdouble] rhs, 
@@ -107,6 +121,130 @@ cdef quad py_to_quad(x) except (<quad> FLT128_MAX):
     xa = np.array([x],dtype=DTYPE)
     return xa[<unsigned>0]
 
+def shapiro_delay_l(x):
+    cdef vectl *_x
+    _x = array_to_vectl(np.asarray(x,dtype=DTYPE))
+    r = shapiro_delay(_x[0])
+    del _x
+    return r
+
+cdef class ODEDelay:
+    cdef longdouble _t_psr
+    cdef longdouble _t_d
+    cdef longdouble _t_bb
+    cdef vectl* _x
+    cdef int _n
+
+    cdef int shapiro
+    cdef int roemer
+    
+    cdef bulirsch_stoer_dense_out[vectl,longdouble]* _stepper
+    cdef cKeplerRHS[longdouble]* _krhs
+    cdef object pyrhs
+
+    def __init__(self, rhs, initial_value, t_d, initial_dt=1e-6,
+            atol=1e-10, rtol=1e-10, 
+            shapiro=True, roemer=True):
+        self._n = len(initial_value)
+        self.shapiro = shapiro
+        self.roemer = roemer
+        self.pyrhs = rhs
+        if isinstance(rhs,KeplerRHS): # FIXME: causes crashes for some reason
+            self._krhs = (<KeplerRHS>(self.pyrhs))._krhs_l
+        else:
+            raise NotImplementedError
+        self._x = array_to_vectl(np.asarray(initial_value, dtype=DTYPE))
+
+        self._t_d = t_d
+        self._stepper = new bulirsch_stoer_dense_out[vectl,longdouble](
+                atol, rtol, 1, 1, True)
+        self._stepper.initialize(self._x[0], self._t_d, initial_dt)
+            
+    def __dealloc__(self):
+        del self._x
+        del self._stepper
+
+    cdef longdouble delay(self, vectl&x):
+        cdef longdouble d
+        d = 0
+        if self.roemer:
+            d += x.at(2)/86400.
+        if self.shapiro:
+            d += shapiro_delay(x) # FIXME: check sign
+        if x.size()>21:
+            d += x.at(21)
+        return d
+
+    cpdef integrate_to(self, t_bb):
+        # We're using uncorrected times
+        cdef longdouble _t_bb
+        cdef longdouble d
+        cdef longdouble before_t_d, after_t_d, temp_t_d
+        cdef longdouble before_t_bb, after_t_bb, temp_t_bb
+        cdef longdouble oldw
+        cdef longdouble thresh = 1e-10/86400.
+
+        _t_bb = t_bb
+        while True:
+            current_state(self._stepper[0], self._x[0])
+            after_t_d = self._stepper.current_time()
+            d = self.delay(self._x[0])
+            if after_t_d-d>_t_bb:
+                break
+            do_step_dense(self._krhs[0],self._stepper[0])
+        # compute state by interpolation
+
+        after_t_bb = after_t_d-d
+
+        before_t_d = self._stepper.previous_time()
+        previous_state(self._stepper[0], self._x[0])
+        before_t_bb = before_t_d + self.delay(self._x[0])
+
+        oldw = 10*(after_t_d-before_t_d)
+        while True:
+            w = after_t_d-before_t_d
+            if w/oldw>0.75: # regula falsi is being slow
+                temp_t_d = (before_t_d+after_t_d)/2
+            else: # use regula falsi - treat the function as linear
+                temp_t_d = (after_t_d*(_t_bb-before_t_bb)+
+                           before_t_d*(after_t_bb-_t_bb))/(after_t_bb-before_t_bb)
+            oldw = w
+
+            self._stepper.calc_state(temp_t_d, self._x[0])
+            temp_t_bb = temp_t_d-self.delay(self._x[0])
+            if -thresh<temp_t_bb-_t_bb<thresh:
+                break
+
+            if temp_t_bb>_t_bb:
+                after_t_d = temp_t_d
+                after_t_bb = temp_t_bb
+            else:
+                before_t_d = temp_t_d
+                before_t_bb = temp_t_bb
+            if after_t_d-before_t_d<thresh/100:
+                raise ValueError("Convergence failure: %s" % locals())
+        self._t_d = temp_t_d
+        self._t_bb = temp_t_bb
+        self._t_psr = temp_t_d
+        if self._x[0].size()>21: # if any time dilation
+            self._t_psr -= self._x[0].at(21)
+
+    def __dealloc__(self):
+        del self._x
+        del self._stepper
+
+    property x:
+        def __get__(self):
+            return vectl_to_array(self._x)
+    property t_d: # dynamical time - input to orbital motion
+        def __get__(self):
+            return self._t_d
+    property t_psr: # pulsar proper time - time at psr center
+        def __get__(self):
+            return self._t_psr
+    property t_bb: # binary barycenter time - time pulse reaches binary barycenter
+        def __get__(self):
+            return self._t_bb
 
 cdef class ODE:
     cdef int use_quad
@@ -208,6 +346,7 @@ cdef class ODE:
             self._dt_l = initial_dt
             self._stepper_l = new bulirsch_stoer[vectl,longdouble](
                     atol, rtol, 1, 1)
+            
         
     cpdef integrate_to(self, t):
         cdef quad _t
