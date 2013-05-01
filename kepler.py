@@ -484,7 +484,7 @@ def inverse_kepler_three_body(total_state):
     ts_o[:3] = x_cm_i
     ts_o[3:6] = v_cm_i
     ts_o[6] = m_p+m_c
-    ts_o[-7:] = total_state[-7:]
+    ts_o[7:14] = total_state[14:21]
 
     (a_o, pb_o, eps1_o, eps2_o,
         i_o, lan_o, q_o, 

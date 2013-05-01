@@ -170,8 +170,8 @@ cdef class ODEDelay:
         if self.roemer:
             d += x.at(2)/86400.
         if self.shapiro:
-            d += shapiro_delay(x) # FIXME: check sign
-        if x.size()>21:
+            d += shapiro_delay(x) 
+        if False and x.size()>21: # This should include only propagation delays
             d += x.at(21)
         return d
 
@@ -189,20 +189,26 @@ cdef class ODEDelay:
             current_state(self._stepper[0], self._x[0])
             after_t_d = self._stepper.current_time()
             d = self.delay(self._x[0])
-            if after_t_d-d>_t_bb:
+            if after_t_d+d>_t_bb:
                 break
             do_step_dense(self._krhs[0],self._stepper[0])
         # compute state by interpolation
 
-        after_t_bb = after_t_d-d
+        after_t_bb = after_t_d+d
 
         before_t_d = self._stepper.previous_time()
         previous_state(self._stepper[0], self._x[0])
         before_t_bb = before_t_d + self.delay(self._x[0])
+    
+        if before_t_bb>=t_bb:
+            raise ValueError("ODE integrator not started early enough for first data point")
+
 
         oldw = 10*(after_t_d-before_t_d)
+        assert oldw>0
         while True:
             w = after_t_d-before_t_d
+            assert w>0
             if w/oldw>0.75: # regula falsi is being slow
                 temp_t_d = (before_t_d+after_t_d)/2
             else: # use regula falsi - treat the function as linear
@@ -211,7 +217,7 @@ cdef class ODEDelay:
             oldw = w
 
             self._stepper.calc_state(temp_t_d, self._x[0])
-            temp_t_bb = temp_t_d-self.delay(self._x[0])
+            temp_t_bb = temp_t_d+self.delay(self._x[0])
             if -thresh<temp_t_bb-_t_bb<thresh:
                 break
 
@@ -227,7 +233,7 @@ cdef class ODEDelay:
         self._t_bb = temp_t_bb
         self._t_psr = temp_t_d
         if self._x[0].size()>21: # if any time dilation
-            self._t_psr -= self._x[0].at(21)
+            self._t_psr -= self._x[0].at(21) # FIXME: is this sign right?
 
     def __dealloc__(self):
         del self._x
@@ -245,6 +251,10 @@ cdef class ODEDelay:
     property t_bb: # binary barycenter time - time pulse reaches binary barycenter
         def __get__(self):
             return self._t_bb
+    property n_evaluations:
+        def __get__(self):
+            return self.pyrhs.n_evaluations
+
 
 cdef class ODE:
     cdef int use_quad

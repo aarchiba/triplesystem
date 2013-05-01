@@ -148,6 +148,56 @@ def remove_trend(vec, mjds, tel_list, tels, uncerts=None,
             vec/uncerts)
     return vec-np.dot(non_orbital_basis,x)
 
+def compute_orbit_bbat(parameters, bbats, 
+        tol=1e-16, shapiro=True, special=True, general=True):
+    # FIXME: deal with epoch not at the beginning
+
+    start = time.time()
+
+    parameters = np.asarray(parameters)
+    bbats = np.asarray(bbats)
+
+    o = dict(parameters=parameters, bbats=bbats, 
+            tol=tol, shapiro=shapiro, special=special, general=general)
+
+    try:
+        initial_values, jac = kepler.kepler_three_body_measurable(
+                *(list(parameters)+[0,np.zeros(3),np.zeros(3),0]))
+    except (ValueError, RuntimeError): # bogus system parameters
+        if special or general:
+            ls = 22
+        else:
+            ls = 21
+        o['states'] = np.random.uniform(0, 1e40, (len(bbats),ls))
+        o['t_d'] = np.random.uniform(0, 1e40, len(bbats))
+        o['t_bb'] = np.random.uniform(0, 1e40, len(bbats))
+        o['t_psr'] = np.random.uniform(0, 1e40, len(bbats))
+        return o
+    
+    rhs = quad_integrate.KeplerRHS(special=special, general=general)
+    if special or general:
+        initial_values = np.concatenate((initial_values, [0]))
+    states = []
+    ts = []
+    O = quad_integrate.ODEDelay(rhs,
+           initial_values, 0,
+           rtol = tol, atol = tol)
+    for t_bb in bbats:
+        O.integrate_to(t_bb)
+        states.append(O.x)
+        ts.append((O.t_bb,O.t_psr,O.t_d))
+    states = np.array(states)
+    ts = np.array(ts)
+
+    o["states"] = states
+    o["t_bb"] = ts[:,0]
+    o["t_psr"] = ts[:,1]
+    o["t_d"] = ts[:,2]
+    o["n_evaluations"] = O.n_evaluations
+    o["time"] = time.time()-start
+
+    return o
+
 def compute_orbit(parameters, times, with_derivatives=False, epoch=0, 
         tol=1e-16, delta=1e-12, symmetric=False,
         shapiro=True, special=True, general=True, use_quad=False):
