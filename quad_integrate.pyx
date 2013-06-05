@@ -20,9 +20,9 @@ ctypedef np.npy_float128 DTYPE_t
 # Magic to make __float128 appear
 cdef extern from *:
     ctypedef long double quad # this is only for cython, where treating real quads as long doubles is fine
-ctypedef vector[quad] vectq
 ctypedef long double longdouble
 ctypedef vector[longdouble] vectl
+ctypedef vector[quad] vectq
 
 
 cdef extern from "extra.hpp":
@@ -52,7 +52,7 @@ cdef extern from "extra.hpp":
         num previous_time()
     #void do_step_dense(CRHS[quad]&rhs, 
     #        bulirsch_stoer_dense_out[vectq,quad]&stepper)
-    void do_step_dense(CRHS[longdouble]&rhs, 
+    void do_step_dense(cKeplerRHS[longdouble]&rhs, 
             bulirsch_stoer_dense_out[vectl,longdouble]&stepper)
     #void current_state(bulirsch_stoer_dense_out[vectq,quad]&stepper,
     #        vectq&x)
