@@ -1,6 +1,8 @@
 
 import inspect
 
+import numpy as np
+
 import minuit
 
 
@@ -9,23 +11,71 @@ def wrapfunc2(%s):
     return wrapfunc(%s)
 """
 
-class MinuitWrap:
+class Fitter:
     def __init__(self, func, *args, **kwargs):
         fargs = inspect.getargspec(func).args
         def wrapfunc(*args):
-            usvals = [v*self._scale[a]+self._offset[a] 
-                        for (a,v) in zip(fargs,args)]
-            return func(*usvals)
+            return func(**dict(self._denormalize(fargs,args)))
         s = ",".join(fargs)
-        exec _fdef % (s,s)        
-        self._minuit = Minuit(wrapfunc2,*args,**kwargs)
-        self._scale = dict((a,1.) for a in fargs)
-        self._offset = dict((a,0.) for a in fargs)
+        exec _fdef % (s,s) in locals()
+        self._minuit = minuit.Minuit(wrapfunc2,*args,**kwargs)
+        self.scale = dict((a,np.float128(1.)) for a in fargs)
+        self.offset = dict((a,np.float128(0.)) for a in fargs)
 
-        svals = [(v-self.offset[a])/self.scale[a] 
-                    for (a,v) in zip(fargs,args)]
+        self.values = {}
+        self.fixed = {}
+        self.errors = {}
+        for k in self._minuit.values:
+            self.values[k] = np.float128(0)
+            self.fixed[k] = False
+            self.errors[k] = np.float128(1)
 
-        class Values(dict):
-            def __getitem__(self2, k):
-                return v-self.
+    def _normalize(self, ks, vs):
+        return [(k,(v-self.offset[k])/self.scale[k])
+                for (k,v) in zip(ks,vs)]
+    def _denormalize(self, ks, vs):
+        return [(k,np.float128(v)*self.scale[k]+self.offset[k])
+                for (k,v) in zip(ks,vs)]
 
+    def _set_minuit(self):
+        for k,v in self._normalize(*zip(*self.values.items())):
+            self._minuit.values[k] = v
+            self._minuit.fixed[k] = self.fixed[k]
+            self._minuit.errors[k] = self.errors[k]/self.scale[k]
+    def _get_minuit(self):
+        for k,v in self._denormalize(*zip(*self._minuit.values.items())):
+            self.values[k] = v
+            self.errors[k] = self._minuit.errors[k]*self.scale[k]
+    def set_normalization(self):
+        for k in self.values:
+            s = self.errors[k]
+            if s==0:
+                s = 1
+            self.scale[k] = s
+            self.offset[k] = self.values[k]
+
+    def __getattr__(self, attrname):
+        return getattr(self._minuit, attrname)
+
+    def migrad(self):
+        self._set_minuit()
+        r = self._minuit.migrad()
+        self._get_minuit()
+        return r
+
+    def hesse(self):
+        self._set_minuit()
+        r = self._minuit.hesse()
+        self._get_minuit()
+        return r
+
+    def matrix(self, correlation=False):
+        M = self._minuit.matrix(correlation)
+        if not correlation:
+            rM = []
+            for (i,p) in enumerate(self._minuit.parameters):
+                rM.append([])
+                for (j,q) in enumerate(self._minuit.parameters):
+                    rM[-1].append(M[i][j]*self.scale[p]*self.scale[q])
+            M = rM
+        return M
