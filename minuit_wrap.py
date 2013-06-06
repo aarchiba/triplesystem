@@ -11,11 +11,15 @@ def wrapfunc2(%s):
     return wrapfunc(%s)
 """
 
-class Fitter:
+class Fitter(object):
     def __init__(self, func, *args, **kwargs):
         fargs = inspect.getargspec(func).args
         def wrapfunc(*args):
-            return func(**dict(self._denormalize(fargs,args)))
+            r = func(**dict(self._denormalize(fargs,args)))
+            if self.best_values is None or r<self.best_values_fval:
+                self.best_values = dict(self._denormalize(fargs,args))
+                self.best_values_fval = r
+            return r
         s = ",".join(fargs)
         exec _fdef % (s,s) in locals()
         self._minuit = minuit.Minuit(wrapfunc2,*args,**kwargs)
@@ -29,6 +33,8 @@ class Fitter:
             self.values[k] = np.float128(0)
             self.fixed[k] = False
             self.errors[k] = np.float128(1)
+        self.best_values = None
+        self.best_values_fval = None
 
     def _normalize(self, ks, vs):
         return [(k,(v-self.offset[k])/self.scale[k])
@@ -57,6 +63,31 @@ class Fitter:
     def __getattr__(self, attrname):
         return getattr(self._minuit, attrname)
 
+    @property
+    def printMode(self):
+        return self._minuit.printMode
+    @printMode.setter
+    def printMode(self, v):
+        self._minuit.printMode = v
+    @property
+    def eps(self):
+        return self._minuit.eps
+    @printMode.setter
+    def eps(self, v):
+        self._minuit.eps = v
+    @property
+    def tol(self):
+        return self._minuit.tol
+    @printMode.setter
+    def tol(self, v):
+        self._minuit.tol = v
+    @property
+    def up(self):
+        return self._minuit.up
+    @printMode.setter
+    def up(self, v):
+        self._minuit.up = v
+
     def migrad(self):
         self._set_minuit()
         r = self._minuit.migrad()
@@ -79,3 +110,4 @@ class Fitter:
                     rM[-1].append(M[i][j]*self.scale[p]*self.scale[q])
             M = rM
         return M
+

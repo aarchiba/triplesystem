@@ -55,11 +55,11 @@ def kepler_2d(a, pb, eps1, eps2, t):
         d_e = np.array([0,0,eps1/e,eps2/e,0])
     #return e, d_e
 
-    om = np.arctan2(eps2, eps1)
+    om = np.arctan2(eps1, eps2)
     if e==0:
         d_om = np.array([0,0,0,0,0])
     else:
-        d_om = np.array([0,0,-eps2/e**2,eps1/e**2,0])
+        d_om = np.array([0,0,-eps1/e**2,eps2/e**2,0])
     #return om, d_om
 
     true_anomaly_0 = -om
@@ -172,13 +172,13 @@ def inverse_kepler_2d(xv,m):
     a_guess = np.hypot(xv[0],xv[1])
     h = (xv[0]*xv[3]-xv[1]*xv[2])
     r = np.hypot(xv[0],xv[1])
-    eps1, eps2 = np.array([xv[3], -xv[2]])*h/mu - xv[:2]/r
+    eps2, eps1 = np.array([xv[3], -xv[2]])*h/mu - xv[:2]/r
     e = np.hypot(eps1, eps2)
     p = h**2/mu
     a = p/(1-e**2)
     pb = 2*np.pi*(a**3/mu)**(0.5)
 
-    om = np.arctan2(eps2,eps1)
+    om = np.arctan2(eps1,eps2)
     true_anomaly = np.arctan2(xv[1],xv[0])-om
     eccentric_anomaly = np.arctan2(np.sqrt(1-e**2)*np.sin(true_anomaly),
                                    e+np.cos(true_anomaly))
@@ -194,7 +194,7 @@ def inverse_kepler_2d(xv,m):
 
 def btx_parameters(asini, pb, eps1, eps2, tasc):
     e = np.hypot(eps1,eps2)
-    om = np.arctan2(eps2,eps1) # FIXME: these are exchanged relative to TEMPO's ELL1
+    om = np.arctan2(eps1,eps2) 
     true_anomaly = -om # True anomaly at the ascending node
     eccentric_anomaly = np.arctan2(np.sqrt(1-e**2)*np.sin(true_anomaly),
                                    e+np.cos(true_anomaly))
