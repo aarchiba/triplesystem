@@ -5,7 +5,6 @@ import numpy as np
 
 import minuit
 
-
 _fdef = """
 def wrapfunc2(%s):
     return wrapfunc(%s)
@@ -14,6 +13,8 @@ def wrapfunc2(%s):
 class Fitter(object):
     def __init__(self, func, *args, **kwargs):
         fargs = inspect.getargspec(func).args
+        if fargs[0] == 'self':
+            fargs = fargs[1:]
         def wrapfunc(*args):
             r = func(**dict(self._denormalize(fargs,args)))
             if self.best_values is None or r<self.best_values_fval:
@@ -72,21 +73,27 @@ class Fitter(object):
     @property
     def eps(self):
         return self._minuit.eps
-    @printMode.setter
+    @eps.setter
     def eps(self, v):
         self._minuit.eps = v
     @property
     def tol(self):
         return self._minuit.tol
-    @printMode.setter
+    @tol.setter
     def tol(self, v):
         self._minuit.tol = v
     @property
     def up(self):
         return self._minuit.up
-    @printMode.setter
+    @up.setter
     def up(self, v):
         self._minuit.up = v
+    @property
+    def strategy(self):
+        return self._minuit.strategy
+    @strategy.setter
+    def strategy(self, v):
+        self._minuit.strategy = v
 
     def migrad(self):
         self._set_minuit()

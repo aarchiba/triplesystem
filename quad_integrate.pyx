@@ -120,7 +120,23 @@ cdef quad py_to_quad(x) except (<quad> FLT128_MAX):
     cdef np.ndarray[DTYPE_t, ndim=1] xa
     xa = np.array([x],dtype=DTYPE)
     return xa[<unsigned>0]
-
+@cython.boundscheck(False)
+cdef longdouble_to_py(DTYPE_t x):
+    # this is strange-looking because assigning to a cdefed
+    # array doesn't go through a python float, but reading
+    # out from it goes through a python float rather than
+    # an array scalar. But you can copy it and index the
+    # non-cdefed array and get out an array scalar.
+    cdef np.ndarray[DTYPE_t, ndim=1] v
+    v = np.empty(1, dtype=DTYPE)
+    v[0] = x
+    return v.copy()[0]
+@cython.boundscheck(False)
+cdef longdouble py_to_longdouble(x):
+    cdef np.ndarray[DTYPE_t, ndim=1] xa
+    xa = np.array([x],dtype=DTYPE)
+    return xa[<unsigned>0]
+ 
 def shapiro_delay_l(x):
     cdef vectl *_x
     _x = array_to_vectl(np.asarray(x,dtype=DTYPE))
@@ -155,7 +171,7 @@ cdef class ODEDelay:
             raise NotImplementedError
         self._x = array_to_vectl(np.asarray(initial_value, dtype=DTYPE))
 
-        self._t_d = t_d
+        self._t_d = py_to_longdouble(t_d)
         self._stepper = new bulirsch_stoer_dense_out[vectl,longdouble](
                 atol, rtol, 1, 1, True)
         self._stepper.initialize(self._x[0], self._t_d, initial_dt)
@@ -184,7 +200,7 @@ cdef class ODEDelay:
         cdef longdouble oldw
         cdef longdouble thresh = 1e-10/86400.
 
-        _t_bb = t_bb
+        _t_bb = py_to_longdouble(t_bb)
         while True:
             current_state(self._stepper[0], self._x[0])
             after_t_d = self._stepper.current_time()
@@ -200,7 +216,7 @@ cdef class ODEDelay:
         previous_state(self._stepper[0], self._x[0])
         before_t_bb = before_t_d + self.delay(self._x[0])
     
-        if before_t_bb>=t_bb:
+        if before_t_bb>=_t_bb:
             raise ValueError("ODE integrator not started early enough for first data point")
 
 
@@ -244,13 +260,13 @@ cdef class ODEDelay:
             return vectl_to_array(self._x)
     property t_d: # dynamical time - input to orbital motion
         def __get__(self):
-            return self._t_d
+            return longdouble_to_py(self._t_d)
     property t_psr: # pulsar proper time - time at psr center
         def __get__(self):
-            return self._t_psr
+            return longdouble_to_py(self._t_psr)
     property t_bb: # binary barycenter time - time pulse reaches binary barycenter
         def __get__(self):
-            return self._t_bb
+            return longdouble_to_py(self._t_bb)
     property n_evaluations:
         def __get__(self):
             return self.pyrhs.n_evaluations

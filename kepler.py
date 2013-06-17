@@ -33,7 +33,7 @@ def kepler_2d(a, pb, eps1, eps2, t):
     """Position and velocity of a particle in a Kepler orbit
 
     The orbit has semimajor axis a, period pb, and eccentricity
-    paramerized by eps1=e*cos(om) and eps2=e*sin(om), and the 
+    paramerized by eps1=e*sin(om) and eps2=e*cos(om), and the 
     particle is on the x axis at time zero, while the values
     are computed for time t.
 

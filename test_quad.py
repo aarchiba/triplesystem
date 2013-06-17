@@ -23,7 +23,7 @@ def setup_solver(shapiro=False,special=False,general=False,roemer=False):
 
 def test_relativity():
     t_bb = 1.
-    S = setup_solver( 
+    S = setup_solver(
             shapiro=False,
             special=True,
             general=True,
@@ -35,13 +35,13 @@ def test_stop():
         yield check_stop, s, False, False, False, True
     yield check_stop, s, True, False, False, True
 def check_stop(t_bb, shapiro, special, general, roemer):
-    S = setup_solver( 
+    S = setup_solver(
             shapiro=shapiro,
             special=special,
             general=general,
             roemer=roemer)
     S['OD'].integrate_to(t_bb)
-    assert abs(S['OD'].t_bb-t_bb)<1e-10/86400.    
+    assert abs(S['OD'].t_bb-t_bb)<1e-10/86400.
 
 def test_consistency():
     yield check_consistency, False,False,False,True
@@ -49,19 +49,19 @@ def test_consistency():
     yield check_consistency, True,True,True,True
 def check_consistency(shapiro,special,general,roemer):
     t_bb = 1.
-    S = setup_solver( 
+    S = setup_solver(
             shapiro=shapiro,
             special=special,
             general=general,
             roemer=roemer)
     S['OD'].integrate_to(t_bb)
     S['O'].integrate_to(S['OD'].t_d)
-    
+
     assert_allclose(S['OD'].x, S['O'].x)
 
 def test_roemer():
     t_bb = 1.
-    S = setup_solver( 
+    S = setup_solver(
             shapiro=False,
             special=False,
             general=False,
@@ -71,31 +71,31 @@ def test_roemer():
 
 def test_shapiro_compare():
     t_bb = 1.
-    S = setup_solver( 
+    S = setup_solver(
             shapiro=True,
             special=True,
             general=True,
             roemer=True)
     S['OD'].integrate_to(t_bb)
     x = S['OD'].x
-    assert_allclose(threebody.shapiros(x)/86400., 
+    assert_allclose(threebody.shapiros(x)/86400.,
             quad_integrate.shapiro_delay_l(x))
 
 def test_inverses():
-    yield (check_inverse, 
+    yield (check_inverse,
             lambda args: tuple(kepler.kepler_2d(*args)[0])+(kepler.mass(args[0],args[1]),),
             lambda state: kepler.inverse_kepler_2d(state[:4],state[4]),
             (1., 1., 0.1, 0.2, 0.4))
-    yield (check_inverse, 
+    yield (check_inverse,
             lambda args: tuple(kepler.kepler_3d(*args)[0])+(kepler.mass(args[0],args[1]),),
             lambda state: kepler.inverse_kepler_3d(state[:6],state[6]),
             (1., 1., 0.1, 0.2, 0.3, 0.5, 0.4))
-    yield (check_inverse, 
+    yield (check_inverse,
             lambda state: kepler.inverse_kepler_two_body(state),
             lambda args: kepler.kepler_two_body(*args)[0],
-            kepler.kepler_two_body(1., 1., 0.1, 0.2, 0.3, 0.5, 0.4, 
+            kepler.kepler_two_body(1., 1., 0.1, 0.2, 0.3, 0.5, 0.4,
                 [0,0,0], [0,0,0], 1.7)[0])
-    yield (check_inverse, 
+    yield (check_inverse,
             lambda state: kepler.inverse_kepler_three_body(state),
             lambda args: kepler.kepler_three_body(*args)[0],
             kepler.kepler_three_body(
@@ -103,7 +103,7 @@ def test_inverses():
                 100., 327., 0.01, 0.02, 0.13, 0.15, -0.13,
                 [0,0,0], [0,0,0])[0])
     t = 5.
-    yield (check_inverse, 
+    yield (check_inverse,
             lambda state: kepler.inverse_kepler_three_body_measurable(state,t),
             lambda args: kepler.kepler_three_body_measurable(*(args+(t,)))[0],
             kepler.kepler_three_body_measurable(
@@ -144,3 +144,12 @@ def test_toolong():
                     0.41133885939089165351,
                     0])
                     , 0)
+
+def test_longdouble_delay():
+    S = setup_solver()
+    OD = S['OD']
+    t_bb = 1+np.float128(1e-18)
+    assert t_bb != 1
+    assert float(t_bb) == 1
+    OD.integrate_to(t_bb)
+    assert OD.t_bb != 1

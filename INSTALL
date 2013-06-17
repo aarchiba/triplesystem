@@ -1,0 +1,10 @@
+NEEDS:
+
+gcc >= 4.6 (for quads)
+cython >= 0.16
+boost (the dev/all package)
+pyminuit with the patch included here
+
+Installing pyminuit: you have to install the minuit package with --prefix=$HOME, set LD_LIBRARY_PATH to include $HOME/lib, then install the (patched) pyminuit package with --home=~ and make sure your PYTHONPATH includes $HOME/lib/python.
+
+
