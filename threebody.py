@@ -173,7 +173,8 @@ best_errors_nogr = [
 def trend_matrix(mjds, tel_list, tels,
     const=True, P=True, Pdot=True, jumps=True,
     position=False, proper_motion=False, parallax=False,
-    f0 = 365.9533436144258189, pepoch = 56100, mjdbase = 55920):
+    f0 = 365.9533436144258189, pepoch = 56100, mjdbase = 55920,
+    tel_base = 'WSRT1400'):
     year_length = 365.2425
 
     non_orbital_basis = []
@@ -188,8 +189,11 @@ def trend_matrix(mjds, tel_list, tels,
         non_orbital_basis.append(f0**(-1)*0.5*((mjds-pepoch)*86400)**2)
         names.append("f1error")
     if jumps:
-        non_orbital_basis.append(np.arange(1,len(tel_list))[:,None]==tels[None,:])
-        names += ["j_%s" % t for t in tel_list[1:]]
+        tl2 = tel_list[:]
+        tl2.remove(tel_base)
+        tel_index = np.array([tel_list.index(t) for t in tl2])
+        non_orbital_basis.append(tel_index[:,None]==tels[None,:])
+        names += ["j_%s" % t for t in tl2]
     if position:
         non_orbital_basis.extend([np.cos(2*np.pi*mjds/year_length),
                                   np.sin(2*np.pi*mjds/year_length)])
@@ -248,6 +252,11 @@ def compute_orbit_bbat(parameters, bbats,
 
     bbats = np.copy(bbats)
     bbats[bbats<0] = 0 # avoid epoch problems during wild guessing
+    in_order = not np.any(np.diff(bbats<0))
+    if not in_order:
+        ix = np.argsort(bbats)
+        bbats = bbats[ix]
+
     rhs = quad_integrate.KeplerRHS(special=special, general=general)
     if special or general:
         initial_values = np.concatenate((initial_values, [0]))
@@ -256,7 +265,10 @@ def compute_orbit_bbat(parameters, bbats,
     O = quad_integrate.ODEDelay(rhs,
            initial_values, 0,
            rtol = tol, atol = tol)
+    l_t_bb = 0
     for t_bb in bbats:
+        assert t_bb >= l_t_bb
+        l_t_bb = t_bb
         O.integrate_to(t_bb)
         states.append(O.x)
         ts.append((O.t_bb,O.t_psr,O.t_d))
@@ -270,6 +282,9 @@ def compute_orbit_bbat(parameters, bbats,
     o["n_evaluations"] = O.n_evaluations
     o["time"] = time.time()-start
 
+    if not in_order:
+        for k in ["t_bb", "t_psr", "t_d"]:
+            o[k][ix] = o[k]
     return o
 
 def compute_orbit(parameters, times, with_derivatives=False, epoch=0,
@@ -450,86 +465,109 @@ def report(F, correlations=True, correlation_threshold=0.5):
 
 class Fitter(object):
 
-    def __init__(self, full=False):
+    def __init__(self, files=None, only_tels=None, tzrmjd_middle=False):
         self.base_mjd = 55920
-        self.tzrmjd_base = 56100
 
-        self.full = full
-        if full:
+        self.files = files
+        if files is not None:
             (self.mjds, self.pulses,
              self.tel_list, self.tels,
-             self.uncerts) = load_toas()
+             self.uncerts) = load_toas(
+                 timfile=files+".tim",
+                 pulses=files+".pulses",
+                 t2outfile=files+".out")
         else:
             (self.mjds, self.pulses,
              self.tel_list, self.tels,
              self.uncerts) = load_toas()
-            
-        self.best_parameters = {'acosi_i': 1.492996505749166051,
-                                'acosi_o': 91.624327061946270585,
-                                'asini_i': 1.2175286739463885032,
-                                'asini_o': 74.672712940915864505,
-                                'delta_lan': -4.8924067422821832562e-05,
-                                'eps1_i': 0.00068569214948117362916,
-                                'eps1_o': 0.035186266537560595716,
-                                'eps2_i': -9.1663265850432053158e-05,
-                                'eps2_o': -0.0034621353064823793319,
-                                'f0': 365.95336879306462755,
-                                'f1': -2.3087642545369393818e-15,
-                                'j_AO1440': -5.2035840020719817456e-06,
-                                'j_AO327': 0.00048620538587195378448,
-                                'j_GBT1500': 8.2762648393068845411e-06,
-                                'j_GBT350': 0.00016435240849134364285,
-                                'j_GBT820': 1.39969928987975978e-05,
-                                'j_WSRT1400': -5.4412712486553552976e-05,
-                                'pb_i': 1.6294017469527389251,
-                                'pb_o': 327.25754679334093919,
-                                'q_i': 0.13737736822937013903,
-                                'tasc_i': 0.40751933310868834821,
-                                'tasc_o': 313.93561073710762493,
-                                'tzrmjd': -1.2363237255575723422e-05}
-        self.best_errors = {'acosi_i': 1.1364855283869259e-07,
-                            'acosi_o': 0.00019120360006287366,
-                            'asini_i': 1.621267616747125e-08,
-                            'asini_o': 8.500526965230896e-08,
-                            'delta_lan': 5.887930556206129e-06,
-                            'eps1_i': 1.626776241835793e-08,
-                            'eps1_o': 3.5025504505771786e-10,
-                            'eps2_i': 2.1422489154240615e-08,
-                            'eps2_o': 6.20211990305842e-10,
-                            'f0': 2.6737212960806425e-12,
-                            'f1': 7.154596587522638e-19,
-                            'j_AO1440': 7.869581642299969e-08,
-                            'j_AO327': 2.939829478062659e-07,
-                            'j_GBT1500': 8.431206831925499e-08,
-                            'j_GBT350': 7.385834466074228e-07,
-                            'j_GBT820': 2.1775339741433153e-07,
-                            'j_WSRT1400': 9.932751627769614e-08,
-                            'pb_i': 1.0096889106962887e-10,
-                            'pb_o': 1.3048863234327796e-07,
-                            'q_i': 1.4736390586720232e-08,
-                            'tasc_i': 9.763319569531049e-09,
-                            'tasc_o': 6.285845016953283e-08,
-                            'tzrmjd': 9.298470732599925e-13}
+
+        # Zap any TOAs before base_mjd
+        c = self.mjds>self.base_mjd
+        if only_tels is not None:
+            c2 = np.zeros(len(c),dtype=bool)
+            for t in only_tels:
+                c2 |= self.tels==self.tel_list.index(t)
+            c &= c2
+        self.mjds = self.mjds[c]
+        self.pulses = self.pulses[c]
+        self.tels = self.tels[c]
+        self.uncerts = self.uncerts[c]
+
+        if tzrmjd_middle:
+            i = len(self.mjds)//2
+            self.tzrmjd_base = self.mjds[i]
+            self.pulses -= self.pulses[i]
+        else:
+            self.tzrmjd_base = 56100
+
+        self.best_parameters = {'acosi_i': 1.4900825491508247195,
+                                'acosi_o': 91.42767255063939872,
+                                'asini_i': 1.2175284220059339105,
+                                'asini_o': 74.672706990252668759,
+                                'delta_lan': 4.5381805741797036301e-05,
+                                'eps1_i': 0.00068567996983762827757,
+                                'eps1_o': 0.035186278706768762311,
+                                'eps2_i': -9.1707837019977451823e-05,
+                                'eps2_o': -0.0034621294567155807675,
+                                'f0': 365.95336877158351635,
+                                'f1': -2.3647090438670959959e-15,
+                                'j_AO1350': 5.3626545410566263709e-05,
+                                'j_AO1440': 4.9253427905890397163e-05,
+                                'j_AO327': 6.4810986548455276952e-05,
+                                'j_GBT1500': 6.2630336794616385746e-05,
+                                'j_GBT350': 1.8881019667480178329e-05,
+                                'j_GBT820': 6.7098889219207914096e-05,
+                                'j_WSRT350': -3.6064326087202637045e-05,
+                                'pb_i': 1.6294017479223471713,
+                                'pb_o': 327.25753674272937699,
+                                'q_i': 0.13737336554227551618,
+                                'tasc_i': 0.40751933102494435678,
+                                'tasc_o': 313.93561256698436945,
+                                'tzrmjd': 0.0001393127295054267707}
+        self.best_errors = {'acosi_i': 8.32004394868322e-08,
+                            'acosi_o': 0.0001359635236049189,
+                            'asini_i': 1.1530594682594488e-08,
+                            'asini_o': 4.8118483561156396e-08,
+                            'delta_lan': 3.155351744198565e-06,
+                            'eps1_i': 1.2419019533035597e-08,
+                            'eps1_o': 2.6472518384964833e-10,
+                            'eps2_i': 1.6227860679295916e-08,
+                            'eps2_o': 4.069936482827143e-10,
+                            'f0': 2.7807472559990485e-12,
+                            'f1': 1.403655726176749e-19,
+                            'j_AO1350': 3.0271232838711795e-07,
+                            'j_AO1440': 3.618571273879266e-08,
+                            'j_AO327': 2.1841028352964986e-07,
+                            'j_GBT1500': 3.982109983409224e-08,
+                            'j_GBT350': 5.647246068277363e-07,
+                            'j_GBT820': 1.5625781584242034e-07,
+                            'j_WSRT350': 7.019612853617829e-07,
+                            'pb_i': 6.293362566635579e-11,
+                            'pb_o': 6.319266859013128e-08,
+                            'q_i': 1.077186204690244e-08,
+                            'tasc_i': 7.451846424579363e-09,
+                            'tasc_o': 3.5744992868852454e-08,
+                            'tzrmjd': 6.894185939775915e-13}
         self.parameters = ['asini_i', 'pb_i', 'eps1_i', 'eps2_i', 'tasc_i',
                            'acosi_i', 'q_i',
                            'asini_o', 'pb_o', 'eps1_o', 'eps2_o', 'tasc_o',
                            'acosi_o', 'delta_lan',
-                           'tzrmjd', 'f0', 'f1',
-                           'j_AO1440', 'j_AO327', 'j_GBT1500',
-                           'j_GBT350', 'j_GBT820', 'j_WSRT1400']
+                           'tzrmjd', 'f0', 'f1']
         self.phase_uncerts = self.uncerts*self.best_parameters['f0']
         self.jmatrix, self.jnames = trend_matrix(
             self.mjds, self.tel_list, self.tels,
             const=False, P=False, Pdot=False, jumps=True)
+        self.parameters += self.jnames
 
     def residuals(self, p):
         jumps = np.dot(self.jmatrix,np.array([p[n] for n in self.jnames]))
         o = compute_orbit_bbat([p[n] for n in self.parameters[:14]],
                 (self.mjds-self.base_mjd)-(jumps/86400.).astype(np.float128))
         t_psr_s = o['t_psr']*86400.
-        t_psr_s = t_psr_s-(p['tzrmjd']+(self.tzrmjd_base-self.base_mjd))*86400
-        # FIXME: assumes PEPOCH=TZRMJD
+        tzrmjd_s = (p['tzrmjd']+(self.tzrmjd_base-self.base_mjd))*86400
+        # assume PEPOCH is self.base_mjd
         phase = p['f0']*t_psr_s+p['f1']*t_psr_s**2/2.
+        phase -= p['f0']*tzrmjd_s+p['f1']*tzrmjd_s**2/2.
         return phase-self.pulses
 
     def mfun(self, asini_i, pb_i, eps1_i, eps2_i, tasc_i,
@@ -537,8 +575,10 @@ class Fitter(object):
             asini_o, pb_o, eps1_o, eps2_o, tasc_o,
             acosi_o, delta_lan,
             tzrmjd, f0, f1,
+            j_AO1350,
             j_AO1440, j_AO327, j_GBT1500,
-            j_GBT350, j_GBT820, j_WSRT1400):
+            j_GBT350, j_GBT820,
+            j_WSRT350):
         r = self.residuals(locals())
         return np.sum((r/self.phase_uncerts)**2)
 

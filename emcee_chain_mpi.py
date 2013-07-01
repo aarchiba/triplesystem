@@ -1,5 +1,6 @@
 from glob import glob
 import os
+import sys
 import tempfile
 import subprocess
 import cPickle as pickle
@@ -17,10 +18,10 @@ import threebody
 
 debug = False
 
-n_walkers = 5*48
-n_steps = 10000
+n_walkers = 5*84
+n_steps = 100000
 
-F = threebody.Fitter()
+F = threebody.Fitter("0337+17-scott-2013-06-06",tzrmjd_middle=True)
 
 j = 0
 def lnprob(offset):
@@ -34,42 +35,62 @@ def lnprob(offset):
         params[p] += o
     r = F.residuals(params)/F.phase_uncerts/efac
     return -0.5*np.sum(r**2)
+def lnprior(offset):
+    return 0
 
 pool = emcee.utils.MPIPool()
 if not pool.is_master():
     pool.wait()
     sys.exit(0)
 
-jobid = os.environ.get('PBS_JOBID','local')
-dbdir = os.path.join('/home/aarchiba/projects/threebody/emcee-chains',jobid)
-local_dbdir = tempfile.mkdtemp()
+try:
+    jobid = os.environ.get('PBS_JOBID','local')
+    dbdir = os.path.join('/home/aarchiba/projects/threebody/emcee-chains',jobid)
+    local_dbdir = tempfile.mkdtemp()
 
-p0 = emcee.utils.sample_ball(
-    np.zeros(len(F.parameters)),
-    [F.best_errors[p] for p in F.parameters],
-    n_walkers)
+    p0 = np.load("start-walkers.npy")
+    #p0 = emcee.utils.sample_ball(
+    #    np.zeros(len(F.parameters)),
+    #    [F.best_errors[p] for p in F.parameters],
+    #    n_walkers)
 
-sampler = emcee.EnsembleSampler(
-    p0.shape[0],p0.shape[1],lnprob,
-    pool=pool)
+    if len(p0.shape)==2:
+        sampler = emcee.EnsembleSampler(
+            p0.shape[0],p0.shape[1],lnprob,
+            pool=pool)
+    else:
+        sampler = emcee.PTSampler(
+            ntemps=p0.shape[0],
+            nwalkers=p0.shape[1],
+            dim=p0.shape[2],
+            logl=lnprob,
+            logp=lnprior,
+            pool=pool)
 
-def save():
-    subprocess.check_call(['rsync','-r',
-                           local_dbdir+"/",
-                           "nimrod:"+dbdir+"/"])
+    def save():
+        subprocess.check_call(['rsync','-r',
+                               local_dbdir+"/",
+                               "nimrod:"+dbdir+"/"])
 
-if debug:
-    print "starting sampling loop"
-save()
-i = 0
-for pos, prob, state in sampler.sample(p0, iterations=n_steps):
     if debug:
-        print "saving sample %d" % i
-    np.save(local_dbdir+"/%06d-pos.npy" % i, pos)
-    np.save(local_dbdir+"/%06d-prob.npy" % i, prob)
-    #pos, prob, state = sampler.run_mcmc(p0, n_steps)
+        print "starting sampling loop"
+    np.save(local_dbdir+"/parameters.npy", F.parameters)
+    np.save(local_dbdir+"/best_parameters.npy",
+            np.array([F.best_parameters[p] for p in F.parameters]))
     save()
-    i += 1
-
-pool.close()
+    i = 0
+    for pos, prob1, prob2 in sampler.sample(p0, iterations=n_steps,
+                                            storechain=False):
+        if len(p0.shape)==2:
+            prob = prob1
+        else:
+            prob = prob2
+        if debug:
+            print "saving sample %d" % i
+        np.save(local_dbdir+"/%06d-pos.npy" % i, pos)
+        np.save(local_dbdir+"/%06d-prob.npy" % i, prob)
+        save()
+        i += 1
+finally:
+    pool.close()
 

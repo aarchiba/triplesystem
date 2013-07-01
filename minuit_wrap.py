@@ -100,6 +100,12 @@ class Fitter(object):
         r = self._minuit.migrad()
         self._get_minuit()
         return r
+    
+    def simplex(self):
+        self._set_minuit()
+        r = self._minuit.simplex()
+        self._get_minuit()
+        return r
 
     def hesse(self):
         self._set_minuit()
