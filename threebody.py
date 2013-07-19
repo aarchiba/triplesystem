@@ -225,7 +225,7 @@ def remove_trend(vec, mjds, tel_list, tels, uncerts=None,
     return vec-np.dot(non_orbital_basis,x)
 
 def compute_orbit_bbat(parameters, bbats,
-        tol=1e-16, shapiro=True, special=True, general=True):
+        tol=1e-16, shapiro=True, special=True, general=True, delta=0):
     # FIXME: deal with epoch not at the beginning
 
     start = time.time()
@@ -257,7 +257,7 @@ def compute_orbit_bbat(parameters, bbats,
         ix = np.argsort(bbats)
         bbats = bbats[ix]
 
-    rhs = quad_integrate.KeplerRHS(special=special, general=general)
+    rhs = quad_integrate.KeplerRHS(special=special, general=general, delta=delta)
     if special or general:
         initial_values = np.concatenate((initial_values, [0]))
     states = []
@@ -287,20 +287,22 @@ def compute_orbit_bbat(parameters, bbats,
             o[k][ix] = o[k]
     return o
 
-def compute_orbit(parameters, times, with_derivatives=False, epoch=0,
-        tol=1e-16, delta=1e-12, symmetric=False,
-        shapiro=True, special=True, general=True, use_quad=False):
-    # FIXME: deal with epoch not at the beginning
-
+def compute_orbit(parameter_dict, times, want_states=True):
     start = time.time()
 
-    parameters = np.asarray(parameters)
-    times = np.asarray(times)
+    delta = parameter_dict.get('delta',0)
 
-    o = dict(parameters=parameters, times=times,
-            tol=tol, delta=delta, symmetric=symmetric,
-            shapiro=shapiro, special=special, general=general,
-            use_quad=use_quad)
+    parameters = np.asarray([parameter_dict[p]
+                for p in kepler.three_body_parameters_measurable[:14]])
+    bbats = np.asarray(times)
+
+    o = dict(parameter_dict=parameter_dict, times=times)
+    tol = parameter_dict.get('tol', 1e-16)
+    use_quad = parameter_dict.get('use_quad',False)
+    ppn_mode = parameter_dict.get('ppn_mode',None)
+    special = parameter_dict.get('special',True)
+    general = parameter_dict.get('general',True)
+    matrix_mode = parameter_dict.get('matrix_mode',0)
 
     try:
         initial_values, jac = kepler.kepler_three_body_measurable(
@@ -310,80 +312,54 @@ def compute_orbit(parameters, times, with_derivatives=False, epoch=0,
             ls = 22
         else:
             ls = 21
-        o['states'] = np.random.uniform(0, 1e40, (len(times),ls))
-        o['delays'] = np.random.uniform(0, 1e40, len(times))
-        if shapiro:
-            o['shapiro'] = np.random.uniform(0, 1e40, len(times))
-        if with_derivatives:
-            o['derivatives'] = np.random.normal(0, 1e40, (len(times),14))
-        o['name'] = None
+        o['states'] = np.random.uniform(0, 1e40, (len(bbats),ls))
+        o['t_d'] = np.random.uniform(0, 1e40, len(bbats))
+        o['t_bb'] = np.random.uniform(0, 1e40, len(bbats))
+        o['t_psr'] = np.random.uniform(0, 1e40, len(bbats))
         return o
-    vectors = jac[:,:14].T
 
-    rhs = quad_integrate.KeplerRHS(special=special, general=general)
+    bbats = np.copy(bbats)
+    bbats[bbats<0] = 0 # avoid epoch problems during wild guessing
+    in_order = not np.any(np.diff(bbats<0))
+    if not in_order:
+        ix = np.argsort(bbats)
+        bbats = bbats[ix]
+
+    if ppn_mode is None:
+        rhs = quad_integrate.KeplerRHS(special=special, general=general,
+                                       delta=delta)
+    elif ppn_mode=='GR':
+        rhs = quad_integrate.KeplerRHS(special=special, general=general,
+            ppn_motion=True,matrix_mode=matrix_mode)
     if special or general:
         initial_values = np.concatenate((initial_values, [0]))
-        vectors = np.concatenate([vectors, np.zeros(14)[:,None]], axis=1)
     states = []
-    shapiro_delays = []
-    if with_derivatives:
-        derivatives = []
-        derivative_errors = []
-        O = quad_integrate.ODE(rhs,
-               initial_values, 0,
-               rtol = tol, atol = tol,
-               vectors = vectors,
-               delta = delta,
-               symmetric = symmetric,
-               use_quad = use_quad)
-        for t in times:
-            O.integrate_to(t)
-            states.append(O.x)
-            dx = O.dx
-            derivatives.append(dx[2,:].copy())
-            if special or general:
-                derivatives[-1] += 86400*dx[21,:]
-            if symmetric:
-                derivative_errors.append(O.dx_error[2,:].copy())
-                if special or general:
-                    derivative_errors[-1] += 86400*O.dx_error[21,:]
-            if shapiro:
-                s, d = shapiros(O.x, with_derivatives=True)
-                derivatives[-1] += np.dot(d, dx)
-                shapiro_delays.append(s)
-        derivatives = np.array(derivatives)
-        derivative_errors = np.array(derivatives)
-    else:
-        O = quad_integrate.ODE(rhs,
-               initial_values, 0,
-               rtol = tol, atol = tol,
-               vectors = [],
-               use_quad = use_quad)
-        for t in times:
-            O.integrate_to(t)
-            states.append(O.x)
-            if shapiro:
-                s = shapiros(O.x)
-                shapiro_delays.append(s)
-    states = np.array(states)
+    ts = []
+    O = quad_integrate.ODEDelay(rhs,
+           initial_values, 0,
+           rtol = tol, atol = tol)
+    l_t_bb = 0
+    states = np.zeros((len(bbats),len(initial_values)),dtype=np.float128)
+    ts = np.zeros((len(bbats),3),dtype=np.float128)
+    for i,t_bb in enumerate(bbats):
+        assert t_bb >= l_t_bb
+        l_t_bb = t_bb
+        O.integrate_to(t_bb)
+        states[i]=O.x
+        ts[i,0]=O.t_bb
+        ts[i,1]=O.t_psr
+        ts[i,2]=O.t_d
 
     o["states"] = states
-    o["delays"] = states[:,2].copy()
-    if with_derivatives:
-        o["derivatives"] = derivatives
-        if symmetric:
-            o["derivative_errors"] = derivative_errors
-    if special or general:
-        o["einstein_delays"] = states[:,21]
-        o["delays"] += 86400*states[:,21]
-        # einstein already included in derivatives
-    if shapiro:
-        o["shapiro_delays"] = np.array(shapiro_delays)
-        o["delays"] += o["shapiro_delays"]
-
+    o["t_bb"] = ts[:,0]
+    o["t_psr"] = ts[:,1]
+    o["t_d"] = ts[:,2]
     o["n_evaluations"] = O.n_evaluations
     o["time"] = time.time()-start
 
+    if not in_order:
+        for k in ["t_bb", "t_psr", "t_d"]:
+            o[k][ix] = o[k]
     return o
 
 def shapiro_delay(s_src, s_m, with_derivatives=False):
@@ -465,8 +441,10 @@ def report(F, correlations=True, correlation_threshold=0.5):
 
 class Fitter(object):
 
-    def __init__(self, files=None, only_tels=None, tzrmjd_middle=False):
+    def __init__(self, files=None, only_tels=None, tzrmjd_middle=False, use_delta=False, ppn_mode=None):
         self.base_mjd = 55920
+
+        self.ppn_mode = ppn_mode
 
         self.files = files
         if files is not None:
@@ -493,37 +471,74 @@ class Fitter(object):
         self.tels = self.tels[c]
         self.uncerts = self.uncerts[c]
 
-        if tzrmjd_middle:
+        if tzrmjd_middle=="weighted":
+            mid = (np.sum(self.uncerts*self.mjds)
+                   /np.sum(self.uncerts))
+            i = np.searchsorted(self.mjds,mid)
+            self.tzrmjd_base = self.mjds[i]
+            self.pulses -= self.pulses[i]
+        elif tzrmjd_middle:
             i = len(self.mjds)//2
             self.tzrmjd_base = self.mjds[i]
             self.pulses -= self.pulses[i]
         else:
             self.tzrmjd_base = 56100
 
-        self.best_parameters = {'acosi_i': 1.4900825491508247195,
-                                'acosi_o': 91.42767255063939872,
-                                'asini_i': 1.2175284220059339105,
-                                'asini_o': 74.672706990252668759,
-                                'delta_lan': 4.5381805741797036301e-05,
-                                'eps1_i': 0.00068567996983762827757,
-                                'eps1_o': 0.035186278706768762311,
-                                'eps2_i': -9.1707837019977451823e-05,
-                                'eps2_o': -0.0034621294567155807675,
-                                'f0': 365.95336877158351635,
-                                'f1': -2.3647090438670959959e-15,
-                                'j_AO1350': 5.3626545410566263709e-05,
-                                'j_AO1440': 4.9253427905890397163e-05,
-                                'j_AO327': 6.4810986548455276952e-05,
-                                'j_GBT1500': 6.2630336794616385746e-05,
-                                'j_GBT350': 1.8881019667480178329e-05,
-                                'j_GBT820': 6.7098889219207914096e-05,
-                                'j_WSRT350': -3.6064326087202637045e-05,
-                                'pb_i': 1.6294017479223471713,
-                                'pb_o': 327.25753674272937699,
-                                'q_i': 0.13737336554227551618,
-                                'tasc_i': 0.40751933102494435678,
-                                'tasc_o': 313.93561256698436945,
-                                'tzrmjd': 0.0001393127295054267707}
+        if ppn_mode=='GR':
+            self.best_parameters = {'acosi_i': 1.4901030967375510719,
+                                    'acosi_o': 91.404576971516813065,
+                                    'asini_i': 1.2175265855988132598,
+                                    'asini_o': 74.672701347664255593,
+                                    'delta_lan': 4.4301423835961980434e-05,
+                                    'eps1_i': 0.00068720390971564635379,
+                                    'eps1_o': 0.035186254399129720146,
+                                    'eps2_i': -9.2091753419594045115e-05,
+                                    'eps2_o': -0.0034621771473608687653,
+                                    'f0': 365.95336876913063498,
+                                    'f1': -2.3671254865566901149e-15,
+                                    'j_AO1350': 5.3185599380177846881e-05,
+                                    'j_AO1440': 4.9318510611301893706e-05,
+                                    'j_AO327': 6.4728773533524038381e-05,
+                                    'j_GBT1500': 6.2578922197013576212e-05,
+                                    'j_GBT350': 1.8857498061175077805e-05,
+                                    'j_GBT820': 6.6997790068967559975e-05,
+                                    'j_WSRT350': -3.6107393277047654665e-05,
+                                    'pb_i': 1.6293969144593854897,
+                                    'pb_o': 327.2574963302058059,
+                                    'q_i': 0.1373907308547224033,
+                                    'tasc_i': 0.4075188737840608819,
+                                    'tasc_o': 313.93557293857620763,
+                                    'tzrmjd': 0.00073697113297647244393,
+                                    'delta': 0.,
+                                    'ppn_mode':ppn_mode}
+        else:
+            # FIXME: dig up old best_parameters from no GR
+            self.best_parameters = {'acosi_i': 1.4901030967375510719,
+                                    'acosi_o': 91.404576971516813065,
+                                    'asini_i': 1.2175265855988132598,
+                                    'asini_o': 74.672701347664255593,
+                                    'delta_lan': 4.4301423835961980434e-05,
+                                    'eps1_i': 0.00068720390971564635379,
+                                    'eps1_o': 0.035186254399129720146,
+                                    'eps2_i': -9.2091753419594045115e-05,
+                                    'eps2_o': -0.0034621771473608687653,
+                                    'f0': 365.95336876913063498,
+                                    'f1': -2.3671254865566901149e-15,
+                                    'j_AO1350': 5.3185599380177846881e-05,
+                                    'j_AO1440': 4.9318510611301893706e-05,
+                                    'j_AO327': 6.4728773533524038381e-05,
+                                    'j_GBT1500': 6.2578922197013576212e-05,
+                                    'j_GBT350': 1.8857498061175077805e-05,
+                                    'j_GBT820': 6.6997790068967559975e-05,
+                                    'j_WSRT350': -3.6107393277047654665e-05,
+                                    'pb_i': 1.6293969144593854897,
+                                    'pb_o': 327.2574963302058059,
+                                    'q_i': 0.1373907308547224033,
+                                    'tasc_i': 0.4075188737840608819,
+                                    'tasc_o': 313.93557293857620763,
+                                    'tzrmjd': 0.00073697113297647244393,
+                                    'delta': 0.,
+                                    'ppn_mode':ppn_mode}
         self.best_errors = {'acosi_i': 8.32004394868322e-08,
                             'acosi_o': 0.0001359635236049189,
                             'asini_i': 1.1530594682594488e-08,
@@ -547,12 +562,16 @@ class Fitter(object):
                             'q_i': 1.077186204690244e-08,
                             'tasc_i': 7.451846424579363e-09,
                             'tasc_o': 3.5744992868852454e-08,
-                            'tzrmjd': 6.894185939775915e-13}
+                            'tzrmjd': 6.894185939775915e-13,
+                            'delta': 1e-3,
+                            'ppn_mode':ppn_mode}
         self.parameters = ['asini_i', 'pb_i', 'eps1_i', 'eps2_i', 'tasc_i',
                            'acosi_i', 'q_i',
                            'asini_o', 'pb_o', 'eps1_o', 'eps2_o', 'tasc_o',
                            'acosi_o', 'delta_lan',
                            'tzrmjd', 'f0', 'f1']
+        if use_delta:
+            self.parameters.append('delta')
         self.phase_uncerts = self.uncerts*self.best_parameters['f0']
         self.jmatrix, self.jnames = trend_matrix(
             self.mjds, self.tel_list, self.tels,
@@ -561,7 +580,7 @@ class Fitter(object):
 
     def residuals(self, p):
         jumps = np.dot(self.jmatrix,np.array([p[n] for n in self.jnames]))
-        o = compute_orbit_bbat([p[n] for n in self.parameters[:14]],
+        o = compute_orbit(p,
                 (self.mjds-self.base_mjd)-(jumps/86400.).astype(np.float128))
         t_psr_s = o['t_psr']*86400.
         tzrmjd_s = (p['tzrmjd']+(self.tzrmjd_base-self.base_mjd))*86400
@@ -579,6 +598,7 @@ class Fitter(object):
             j_AO1440, j_AO327, j_GBT1500,
             j_GBT350, j_GBT820,
             j_WSRT350):
+        ppn_mode = self.ppn_mode
         r = self.residuals(locals())
         return np.sum((r/self.phase_uncerts)**2)
 

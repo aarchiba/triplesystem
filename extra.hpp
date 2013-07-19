@@ -3,228 +3,21 @@
 #include <float.h>
 #include <limits>
 #include <cmath>
+
 using namespace std; //needed?
 
-extern "C" {
-#include <quadmath.h>
-}
+#include "quad_defs.hpp"
 
-#define FLT128_NAN (((__float128)0)/((__float128)0))
-class quad { 
-    // GCC has a bug where __float128 does not produce RTTI
-    // This breaks the dense output integrators
-    // So here's a thin wrapper
-    public:
-        __float128 v;
-        quad() : v(FLT128_NAN) {};
-        quad(__float128 val) : v(val) {};
-        quad(const quad& val) : v(val.v) {};
-        operator __float128() { return v; };
-        const quad& operator +=(const quad&e) { v+=e.v; return *this; };
-        const quad& operator -=(const quad&e) { v-=e.v; return *this; };
-        const quad& operator *=(const quad&e) { v*=e.v; return *this; };
-        const quad& operator /=(const quad&e) { v/=e.v; return *this; };
-        //quad operator-() { return quad(-v); };
-};
-typedef vector<quad> vectq;
+#include <Eigen/Dense>
+#include "ppn.hpp"
+using namespace Eigen;
+
+
 typedef vector<long double> vectl;
-
-// blerg. C++ type inference is *terrible*.
-quad operator+(const quad&b, const quad&e) { return quad(b.v+e.v); }
-quad operator+(const quad&b, const int&e) { return quad(b.v+e); }
-quad operator+(const int&b, const quad&e) { return quad(b+e.v); }
-quad operator+(const quad&b, const double&e) { return quad(b.v+e); }
-quad operator+(const double&b, const quad&e) { return quad(b+e.v); }
-
-quad operator-(const quad&b, const quad&e) { return quad(b.v-e.v); }
-quad operator-(const int&b, const quad&e) { return quad(b-e.v); }
-quad operator-(const quad&b, const int&e) { return quad(b.v-e); }
-quad operator-(const quad&b, const float&e) { return quad(b.v-e); }
-
-quad operator*(const quad&b, const quad&e) { return quad(b.v*e.v); }
-quad operator*(const quad&b, const int&e) { return quad(b.v*e); }
-quad operator*(const int&b, const quad&e) { return quad(b*e.v); }
-quad operator*(const unsigned int&b, const quad&e) { return quad(b*e.v); }
-quad operator*(const double&b, const quad&e) { return quad(b*e.v); }
-
-quad operator/(const quad&b, const quad&e) { return quad(b.v/e.v); }
-quad operator/(const quad&b, const double&e) { return quad(b.v/e); }
-quad operator/(const double&b, const quad&e) { return quad(b/e.v); }
-quad operator/(const quad&b, const float&e) { return quad(b.v/e); }
-quad operator/(const float&b, const quad&e) { return quad(b/e.v); }
-quad operator/(const quad&b, const int&e) { return quad(b.v/e); }
-quad operator/(const int&b, const quad&e) { return quad(b/e.v); }
-quad operator/(const quad&b, const long unsigned int&e) { return quad(b.v/e); }
-quad operator/(const long unsigned int&b, const quad&e) { return quad(b/e.v); }
-
-quad operator-(const quad&b) { return quad(-b.v); }
-
-quad operator<(const quad&b, const quad&e) { return b.v<e.v; }
-quad operator>(const quad&b, const quad&e) { return b.v>e.v; }
-quad operator>=(const quad&b, const quad&e) { return b.v>=e.v; }
-quad operator<=(const quad&b, const quad&e) { return b.v<=e.v; }
-quad operator<(const unsigned int&b, const quad&e) { return b<e.v; }
-quad operator>(const unsigned int&b, const quad&e) { return b>e.v; }
-quad operator>=(const unsigned int&b, const quad&e) { return b>=e.v; }
-quad operator<=(const unsigned int&b, const quad&e) { return b<=e.v; }
-quad operator<(const quad&b, const unsigned int&e) { return b.v<e; }
-quad operator>(const quad&b, const unsigned int&e) { return b.v>e; }
-quad operator>=(const quad&b, const unsigned int&e) { return b.v>=e; }
-quad operator<=(const quad&b, const unsigned int&e) { return b.v<=e; }
-quad operator<(const int&b, const quad&e) { return b<e.v; }
-quad operator>(const int&b, const quad&e) { return b>e.v; }
-quad operator>=(const int&b, const quad&e) { return b>=e.v; }
-quad operator<=(const int&b, const quad&e) { return b<=e.v; }
-quad operator<(const quad&b, const int&e) { return b.v<e; }
-quad operator>(const quad&b, const int&e) { return b.v>e; }
-quad operator>=(const quad&b, const int&e) { return b.v>=e; }
-quad operator<=(const quad&b, const int&e) { return b.v<=e; }
-quad operator<(const double&b, const quad&e) { return b<e.v; }
-quad operator>(const double&b, const quad&e) { return b>e.v; }
-quad operator>=(const double&b, const quad&e) { return b>=e.v; }
-quad operator<=(const double&b, const quad&e) { return b<=e.v; }
-quad operator<(const quad&b, const double&e) { return b.v<e; }
-quad operator>(const quad&b, const double&e) { return b.v>e; }
-quad operator>=(const quad&b, const double&e) { return b.v>=e; }
-quad operator<=(const quad&b, const double&e) { return b.v<=e; }
-quad operator<(const float&b, const quad&e) { return b<e.v; }
-quad operator>(const float&b, const quad&e) { return b>e.v; }
-quad operator>=(const float&b, const quad&e) { return b>=e.v; }
-quad operator<=(const float&b, const quad&e) { return b<=e.v; }
-quad operator<(const quad&b, const float&e) { return b.v<e; }
-quad operator>(const quad&b, const float&e) { return b.v>e; }
-quad operator>=(const quad&b, const float&e) { return b.v>=e; }
-quad operator<=(const quad&b, const float&e) { return b.v<=e; }
-
-quad operator==(const quad&b, const quad&e) { return b.v==e.v; }
-quad operator==(const quad&b, const int&e) { return b.v==e; }
-quad operator==(const int&b, const quad&e) { return b==e.v; }
-quad operator==(const quad&b, const double&e) { return b.v==e; }
-quad operator==(const double&b, const quad&e) { return b==e.v; }
-
-namespace std {
-    quad pow(quad b, quad e) {
-        return powq(b, e);
-    };
-    quad max(quad a, quad b) {
-        return (a<b) ? b : a;
-    };
-    quad fabs(quad a) {
-        return (a<(quad)0) ? -a.v : a.v;
-    };
-    quad abs(quad a) {
-        return (a<(quad)0) ? -a.v : a.v;
-    };
-    quad ceil(quad b) {
-        return ceilq(b);
-    }
-    quad floor(quad b) {
-        return floorq(b);
-    }
-    quad exp(quad b) {
-        return expq(b);
-    }
-    long double max(long double a, long double b) {
-        return (a<b) ? b : a;
-    };
-    inline quad expm1(quad b) {
-        return expm1q(b);
-    }
-    inline long double expm1(long double b) {
-        return expm1l(b);
-    }
-    inline quad sin(quad b) {
-        return sinq(b);
-    }
-    inline quad cos(quad b) {
-        return cosq(b);
-    }
-    inline quad log(quad b) {
-        return logq(b);
-    }
-    inline quad log1p(quad b) {
-        return log1pq(b);
-    }
-    inline long double log1p(long double b) {
-        return log1pl(b);
-    }
-    inline quad sqrt(quad b) {
-        return sqrtq(b);
-    }
-    ostream& operator<<(ostream& ost, const quad&q) {
-        return ost<<((long double)q.v);
-    }
-    istream& operator>>(istream& ist, quad&q) {
-        long double qq;
-        ist>>qq;
-        q = qq;
-        return ist;
-    }
-};
-namespace std {
-  template<>
-    struct numeric_limits<quad>
-    {
-      static _GLIBCXX_USE_CONSTEXPR bool is_specialized = true;
-
-      static _GLIBCXX_CONSTEXPR quad 
-      min() throw()  { return FLT128_MIN; }
-
-      static _GLIBCXX_CONSTEXPR quad 
-      max() throw() { return FLT128_MAX; }
-
-      static _GLIBCXX_USE_CONSTEXPR int digits = FLT128_MANT_DIG;
-      static _GLIBCXX_USE_CONSTEXPR int digits10 = FLT128_DIG;
-      static _GLIBCXX_USE_CONSTEXPR bool is_signed = true;
-      static _GLIBCXX_USE_CONSTEXPR bool is_integer = false;
-      static _GLIBCXX_USE_CONSTEXPR bool is_exact = false;
-      static _GLIBCXX_USE_CONSTEXPR int radix = __FLT_RADIX__;
-
-      static _GLIBCXX_CONSTEXPR quad 
-      epsilon() throw() { return FLT128_EPSILON; }
-
-      static _GLIBCXX_CONSTEXPR quad 
-      round_error() throw() { return 0.5; }
-
-      static _GLIBCXX_USE_CONSTEXPR int min_exponent = FLT128_MIN_EXP;
-      static _GLIBCXX_USE_CONSTEXPR int min_exponent10 = FLT128_MIN_10_EXP;
-      static _GLIBCXX_USE_CONSTEXPR int max_exponent = FLT128_MAX_EXP;
-      static _GLIBCXX_USE_CONSTEXPR int max_exponent10 = FLT128_MAX_10_EXP;
-
-      static _GLIBCXX_USE_CONSTEXPR bool has_infinity = true;
-      static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = true;
-      static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = has_quiet_NaN;
-      static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
-	= denorm_present;
-      static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss 
-        = true;
-
-      static _GLIBCXX_CONSTEXPR quad 
-      infinity() throw() { return __builtin_huge_val(); }
-
-      static _GLIBCXX_CONSTEXPR quad 
-      quiet_NaN() throw() { return __builtin_nan (""); }
-
-      static _GLIBCXX_CONSTEXPR quad 
-      signaling_NaN() throw() { return __builtin_nans (""); }
-
-      static _GLIBCXX_CONSTEXPR quad 
-      denorm_min() throw() { return FLT128_DENORM_MIN; }
-
-      static _GLIBCXX_USE_CONSTEXPR bool is_iec559
-	= has_infinity && has_quiet_NaN && has_denorm == denorm_present;
-      static _GLIBCXX_USE_CONSTEXPR bool is_bounded = true;
-      static _GLIBCXX_USE_CONSTEXPR bool is_modulo = false;
-
-      static _GLIBCXX_USE_CONSTEXPR bool traps = false; // don't know
-      static _GLIBCXX_USE_CONSTEXPR bool tinyness_before = false; // don't know
-      static _GLIBCXX_USE_CONSTEXPR float_round_style round_style 
-       = round_to_nearest;
-    };
-}
 
 #include <boost/numeric/odeint.hpp>
 using namespace boost::numeric::odeint;
+
 inline quad sqr(quad b) {
     return b*b;
 }
@@ -269,39 +62,157 @@ class CRHS {
 
 class MisshapenState { };
 #define G ((num)36779.59091405234)
+#define c_ ((num)86400)
 #define c2 ((num)7464960000)
+template<class num>
+void compute_ppn_rhs(const num x[], num dxdt[], const num gamma, const num beta,
+		     const num Gamma01, const num Gamma02, const num Gamma12,
+		     const num Theta01, const num Theta02, const num Theta12,
+		     const num Gamma011, const num Gamma012, const num Gamma022,
+		     const num Gamma100, const num Gamma102, const num Gamma122,
+		     const num Gamma200, const num Gamma201, const num Gamma211,
+		     const int matrix_mode, const num c_scale) {
+  num x_scaled[21]; // unitless velocity, mass in lt-s
+  num m0, m1, m2; // geometrized masses
+  for(int k=0;k<3;k++) {
+    for(int l=0;l<3;l++) {
+      x_scaled[7*k+l] = x[7*k+l];
+      x_scaled[7*k+l+3] = x[7*k+l+3]/c_/c_scale;
+    }
+    x_scaled[7*k+6] = x[7*k+6]*G/c2/c_scale/c_scale;
+  }
+  m0 = x_scaled[6];
+  m1 = x_scaled[13];
+  m2 = x_scaled[20];
+  if (matrix_mode==0) {
+    num a_direct[9];
+    ppn_direct(x_scaled,a_direct,gamma,beta,
+	       Gamma01*m0*m1,Gamma02*m0*m2,Gamma12*m1*m2,
+	       Theta01*m0*m1,Theta02*m0*m2,Theta12*m1*m2,
+	       Gamma011*m0*m1*m1, Gamma012*m0*m1*m2, Gamma022*m0*m2*m2,
+	       Gamma100*m1*m0*m0, Gamma102*m1*m0*m2, Gamma122*m1*m2*m2,
+	       Gamma200*m2*m0*m0, Gamma201*m2*m0*m1, Gamma211*m2*m1*m1);
+    for(int j=0;j<3;j++) {
+      for(int i=0;i<3;i++) {
+	dxdt[j*7+i] = x[j*7+i+3];
+	dxdt[j*7+i+3] = a_direct[j*3+i]*c2*c_scale*c_scale; // acceleration back into lt-s/day/day
+      }
+    }
+  } else {
+    Matrix< num, Dynamic, Dynamic > M(9,9);
+    Matrix< num, Dynamic, 1 > b(9);
+    if (matrix_mode>0) {
+      ppn(x_scaled,M,b,gamma,beta,
+	  Gamma01*m0*m1,Gamma02*m0*m2,Gamma12*m1*m2,
+	  Theta01*m0*m1,Theta02*m0*m2,Theta12*m1*m2,
+	  Gamma011*m0*m1*m1, Gamma012*m0*m1*m2, Gamma022*m0*m2*m2,
+	  Gamma100*m1*m0*m0, Gamma102*m1*m0*m2, Gamma122*m1*m2*m2,
+	  Gamma200*m2*m0*m0, Gamma201*m2*m0*m1, Gamma211*m2*m1*m1);
+    } else {
+      newton_lagrangian(x_scaled,M,b);
+    }
+    
+    Matrix< num, Dynamic, 1 > a(9);
+    if (matrix_mode==1 || matrix_mode<0) {
+      a = M.ldlt().solve(b);
+    } else if (matrix_mode==2) {
+      a = M.fullPivHouseholderQr().solve(b);
+    } else if (matrix_mode==3) {
+      a = M.fullPivLu().solve(b);
+    } 
+    for(int j=0;j<3;j++) {
+      for(int i=0;i<3;i++) {
+	dxdt[j*7+i] = x[j*7+i+3];
+	dxdt[j*7+i+3] = a(j*3+i)*c2*c_scale*c_scale; // acceleration back into lt-s/day/day
+      }
+    }
+  }
+}
 template<class num>
 class cKeplerRHS {
         long long &evals;
         const bool special, general;
+        const num delta;
+        const bool ppn_motion;
+        const num gamma;
+        const num beta;
+        const num Gamma01, Gamma02, Gamma12;
+        const num Theta01, Theta02, Theta12;
+        const num Gamma011, Gamma012, Gamma022;
+        const num Gamma100, Gamma102, Gamma122;
+        const num Gamma200, Gamma201, Gamma211;
+        const int matrix_mode;
+        const num c_scale;
     public:
-        cKeplerRHS(bool special, bool general, long long&evals) : 
-            evals(evals), special(special), general(general) { };
+        cKeplerRHS(bool special, bool general, long long&evals, num delta,
+		   bool ppn_motion, num gamma, num beta,
+		   num Gamma01, num Gamma02, num Gamma12,
+		   num Theta01, num Theta02, num Theta12,
+ 		   num Gamma011, num Gamma012, num Gamma022,
+		   num Gamma100, num Gamma102, num Gamma122,
+		   num Gamma200, num Gamma201, num Gamma211,
+		   int matrix_mode, num c_scale) : 
+	  evals(evals), special(special), general(general), delta(delta),
+          ppn_motion(ppn_motion), gamma(gamma), beta(beta),
+	  Gamma01(Gamma01), Gamma02(Gamma02), Gamma12(Gamma12),
+          Theta01(Theta01), Theta02(Theta02), Theta12(Theta12),
+	  Gamma011(Gamma011), Gamma012(Gamma012), Gamma022(Gamma022), 
+	  Gamma100(Gamma100), Gamma102(Gamma102), Gamma122(Gamma122), 
+	  Gamma200(Gamma200), Gamma201(Gamma201), Gamma211(Gamma211), 
+	matrix_mode(matrix_mode), c_scale(c_scale) { };
         
         void kepler(const num x[], num dxdt[], const num t) {
             unsigned int i,j,k;
             num m_i, m_j;
             num r2_ij, cst;
-
+	    
             for (i=0;i<21;i++) dxdt[i]=0;
-
-            for (i=0;i<3;i++) {
+	    if (ppn_motion) {
+	      compute_ppn_rhs(x,dxdt,gamma,beta,
+			      Gamma01,Gamma02,Gamma12,
+			      Theta01,Theta02,Theta12,
+ 			      Gamma011, Gamma012, Gamma022,
+			      Gamma100, Gamma102, Gamma122,
+			      Gamma200, Gamma201, Gamma211,
+			      matrix_mode, c_scale);
+	    } else if (delta==0) {
+	      for (i=0;i<3;i++) {
                 for (k=0;k<3;k++)
-                    dxdt[7*i+k] = x[7*i+k+3];
+		  dxdt[7*i+k] = x[7*i+k+3];
                 m_i = x[7*i+6];
                 for (j=0;j<i;j++) {
-                    m_j = x[7*j+6];
-                    r2_ij = 0;
-                    for (k=0;k<3;k++)
-                        r2_ij += sqr(x[7*j+k]-x[7*i+k]);
-                    for (k=0;k<3;k++) {
-                        cst = G*(x[7*j+k]-x[7*i+k])
-                            *pow(r2_ij,-((num)3)/((num)2));
-                        dxdt[7*i+k+3] +=  m_j*cst;
-                        dxdt[7*j+k+3] += -m_i*cst;
-                    }
+		  m_j = x[7*j+6];
+		  r2_ij = 0;
+		  for (k=0;k<3;k++)
+		    r2_ij += sqr(x[7*j+k]-x[7*i+k]);
+		  for (k=0;k<3;k++) {
+		    cst = G*(x[7*j+k]-x[7*i+k])
+		      *pow(r2_ij,-((num)3)/((num)2));
+		    dxdt[7*i+k+3] +=  m_j*cst;
+		    dxdt[7*j+k+3] += -m_i*cst;
+		  }
                 }
-            }
+	      }
+	    } else {
+	      for (i=0;i<3;i++) {
+                for (k=0;k<3;k++)
+		  dxdt[7*i+k] = x[7*i+k+3];
+                m_i = x[7*i+6]; // Inertial mass
+                for (j=0;j<i;j++) {
+		  m_j = x[7*j+6]; // Inertial mass
+		  r2_ij = 0;
+		  for (k=0;k<3;k++)
+		    r2_ij += sqr(x[7*j+k]-x[7*i+k]);
+		  for (k=0;k<3;k++) {
+		    cst = G*(x[7*j+k]-x[7*i+k])
+		      *pow(r2_ij,-((num)3)/((num)2));
+		    if (j==0) cst *= (1+delta);
+		    dxdt[7*i+k+3] +=  m_j*cst;
+		    dxdt[7*j+k+3] += -m_i*cst;
+		  }
+                }
+	      }
+	    }
         }
 
         void relativity(const num x[], num dxdt[], const num t) {

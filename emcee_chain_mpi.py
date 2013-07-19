@@ -21,7 +21,8 @@ debug = False
 n_walkers = 5*84
 n_steps = 100000
 
-F = threebody.Fitter("0337+17-scott-2013-06-06",tzrmjd_middle=True)
+F = threebody.Fitter("0337+17-scott-2013-06-06",
+                     tzrmjd_middle='weighted',ppn_mode='GR')
 
 j = 0
 def lnprob(offset):
