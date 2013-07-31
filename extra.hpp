@@ -4,20 +4,44 @@
 #include <limits>
 #include <cmath>
 
+extern "C" {
+#include <quadmath.h>
+}
+
+// for ppn.hpp, which needs to use __float128 to avoid template meltdowns
+inline __float128 pow(__float128 b, int e) {
+  return powq(b,e);
+}
+inline __float128 sqrt(__float128 b) {
+  return sqrtq(b);
+}
+
 using namespace std; //needed?
 
-#include "quad_defs.hpp"
+//#include "quad_defs.hpp"
 
 #include <Eigen/Dense>
 #include "ppn.hpp"
 using namespace Eigen;
 
-
+#include <boost/multiprecision/float128.hpp>
+typedef boost::multiprecision::float128 quad;
 typedef vector<long double> vectl;
+typedef vector<quad> vectq;
+
+inline long double quad_to_longdouble(quad q) {
+  return q.convert_to<long double>();
+}
 
 #include <boost/numeric/odeint.hpp>
 using namespace boost::numeric::odeint;
 
+inline quad log1p(quad q) {
+  return log1pq(q.backend().value());
+}
+inline quad expm1(quad q) {
+  return expm1q(q.backend().value());
+}
 inline quad sqr(quad b) {
     return b*b;
 }
@@ -60,6 +84,62 @@ class CRHS {
         }
 };
 
+// using boost's float128 causes GCC to melt down on these massive expressions
+// strip down to raw __float128
+void ppn(const quad xv[21], 
+    quad M[9][9],
+    quad b[9],
+    const quad gamma, const quad beta,
+    const quad Gamma01, const quad Gamma02, const quad Gamma12, 
+    const quad Theta01, const quad Theta02, const quad Theta12,
+    const quad Gamma011, const quad Gamma012, const quad Gamma022,
+    const quad Gamma100, const quad Gamma102, const quad Gamma122,
+    const quad Gamma200, const quad Gamma201, const quad Gamma211) {
+  __float128 xvf[21];
+  __float128 Mf[9][9];
+  __float128 bf[9];
+  for(int i=0;i<21;i++) {
+    xvf[i] = xv[i].backend().value();
+  }
+  ppn(xvf, Mf, bf,
+	     gamma.backend().value(), beta.backend().value(),
+	     Gamma01.backend().value(), Gamma02.backend().value(), Gamma12.backend().value(), 
+	     Theta01.backend().value(), Theta02.backend().value(), Theta12.backend().value(),
+	     Gamma011.backend().value(), Gamma012.backend().value(), Gamma022.backend().value(),
+	     Gamma100.backend().value(), Gamma102.backend().value(), Gamma122.backend().value(),
+	     Gamma200.backend().value(), Gamma201.backend().value(), Gamma211.backend().value());
+  for(int i=0;i<9;i++) {
+    b[i] = bf[i];
+    for(int j=0;j<9;j++) {
+      M[j][i] = Mf[j][i];
+    }
+  }
+}
+void ppn_direct(const quad xv[21], 
+    quad a[9],
+    const quad gamma, const quad beta,
+    const quad Gamma01, const quad Gamma02, const quad Gamma12, 
+    const quad Theta01, const quad Theta02, const quad Theta12,
+    const quad Gamma011, const quad Gamma012, const quad Gamma022,
+    const quad Gamma100, const quad Gamma102, const quad Gamma122,
+    const quad Gamma200, const quad Gamma201, const quad Gamma211) {
+  __float128 xvf[21];
+  __float128 af[9];
+  for(int i=0;i<21;i++) {
+    xvf[i] = xv[i].backend().value();
+  }
+  ppn_direct(xvf, af,
+	     gamma.backend().value(), beta.backend().value(),
+	     Gamma01.backend().value(), Gamma02.backend().value(), Gamma12.backend().value(), 
+	     Theta01.backend().value(), Theta02.backend().value(), Theta12.backend().value(),
+	     Gamma011.backend().value(), Gamma012.backend().value(), Gamma022.backend().value(),
+	     Gamma100.backend().value(), Gamma102.backend().value(), Gamma122.backend().value(),
+	     Gamma200.backend().value(), Gamma201.backend().value(), Gamma211.backend().value());
+  for(int i=0;i<9;i++) {
+    a[i] = af[i];
+  }
+}
+
 class MisshapenState { };
 #define G ((num)36779.59091405234)
 #define c_ ((num)86400)
@@ -99,8 +179,10 @@ void compute_ppn_rhs(const num x[], num dxdt[], const num gamma, const num beta,
       }
     }
   } else {
-    Matrix< num, Dynamic, Dynamic > M(9,9);
-    Matrix< num, Dynamic, 1 > b(9);
+    Matrix< num, Dynamic, Dynamic > Me(9,9);
+    Matrix< num, Dynamic, 1 > be(9);
+    num M[9][9];
+    num b[9];
     if (matrix_mode>0) {
       ppn(x_scaled,M,b,gamma,beta,
 	  Gamma01*m0*m1,Gamma02*m0*m2,Gamma12*m1*m2,
@@ -111,14 +193,19 @@ void compute_ppn_rhs(const num x[], num dxdt[], const num gamma, const num beta,
     } else {
       newton_lagrangian(x_scaled,M,b);
     }
-    
+    for(int j=0;j<9;j++) {
+      be(j) = b[j];
+      for(int i=0;i<9;i++) {
+	Me(j,i) = M[j][i];
+      }
+    }
     Matrix< num, Dynamic, 1 > a(9);
     if (matrix_mode==1 || matrix_mode<0) {
-      a = M.ldlt().solve(b);
+      a = Me.ldlt().solve(be);
     } else if (matrix_mode==2) {
-      a = M.fullPivHouseholderQr().solve(b);
+      a = Me.fullPivHouseholderQr().solve(be);
     } else if (matrix_mode==3) {
-      a = M.fullPivLu().solve(b);
+      a = Me.fullPivLu().solve(be);
     } 
     for(int j=0;j<3;j++) {
       for(int i=0;i<3;i++) {
@@ -134,8 +221,6 @@ class cKeplerRHS {
         const bool special, general;
         const num delta;
         const bool ppn_motion;
-        const num gamma;
-        const num beta;
         const num Gamma01, Gamma02, Gamma12;
         const num Theta01, Theta02, Theta12;
         const num Gamma011, Gamma012, Gamma022;
@@ -144,6 +229,8 @@ class cKeplerRHS {
         const int matrix_mode;
         const num c_scale;
     public:
+        const num gamma;
+        const num beta;
         cKeplerRHS(bool special, bool general, long long&evals, num delta,
 		   bool ppn_motion, num gamma, num beta,
 		   num Gamma01, num Gamma02, num Gamma12,
@@ -264,9 +351,9 @@ class cKeplerRHS {
         }
 };
 template<class num>
-num shapiro_delay(const vector<num>&x) { // in days
+num shapiro_delay(const vector<num>&x, const num gamma) { // in days
     const num c = 86400; // lt-s per day
-    const num cst = -2*G/(c*c*c);
+    const num cst = -2*G*(1+gamma)/2/(c*c*c); 
     num d = 0;
     for(int k=1;k<3;k++) {
         num delta_z, dr2=0;

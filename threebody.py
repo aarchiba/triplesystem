@@ -287,7 +287,7 @@ def compute_orbit_bbat(parameters, bbats,
             o[k][ix] = o[k]
     return o
 
-def compute_orbit(parameter_dict, times, want_states=True):
+def compute_orbit(parameter_dict, times):
     start = time.time()
 
     delta = parameter_dict.get('delta',0)
@@ -331,13 +331,40 @@ def compute_orbit(parameter_dict, times, want_states=True):
     elif ppn_mode=='GR':
         rhs = quad_integrate.KeplerRHS(special=special, general=general,
             ppn_motion=True,matrix_mode=matrix_mode)
+    elif ppn_mode=='heavypsr':
+        delta = parameter_dict['delta'] # M(G) = (1+delta) M(I)
+        dgamma = parameter_dict['dgamma']
+        dbeta = parameter_dict['dbeta']
+        dmbeta = parameter_dict['dmbeta'] #FIXME: all these three-body terms suck
+        dmpbeta = parameter_dict['dmpbeta']
+        dlambda = parameter_dict['dlambda']
+        mgammafac = (1+dgamma-delta)/(1+dgamma)
+        rhs = quad_integrate.KeplerRHS(special=special, general=general,
+            gamma=1+dgamma, beta=1+dbeta,
+            Gamma01=(1+delta), Gamma02=(1+delta), Gamma12=1,
+            Theta01=mgammafac, Theta02=mgammafac, Theta12=1,
+            Gamma011=(1+dmpbeta), Gamma012=(1+dmpbeta), Gamma022=(1+dmpbeta),
+            Gamma100=(1+dlambda), Gamma102=(1+dmbeta), Gamma122=1,
+            Gamma200=(1+dlambda), Gamma201=(1+dmbeta), Gamma211=1,
+            ppn_motion=True,matrix_mode=matrix_mode)
+    elif ppn_mode=='heavysimple':
+        delta = parameter_dict['delta'] # M(G) = (1+delta) M(I)
+        dgamma = parameter_dict['dgamma']
+        dbeta = parameter_dict['dbeta']
+        mgammafac = (1+dgamma-delta)/(1+dgamma)
+        rhs = quad_integrate.KeplerRHS(special=special, general=general,
+            gamma=1+dgamma, beta=1+dbeta,
+            Gamma01=(1+delta), Gamma02=(1+delta), Gamma12=1,
+            Theta01=mgammafac, Theta02=mgammafac, Theta12=1,
+            ppn_motion=True,matrix_mode=matrix_mode)
     if special or general:
         initial_values = np.concatenate((initial_values, [0]))
     states = []
     ts = []
     O = quad_integrate.ODEDelay(rhs,
            initial_values, 0,
-           rtol = tol, atol = tol)
+           rtol=tol, atol=tol,
+           use_quad=use_quad)
     l_t_bb = 0
     states = np.zeros((len(bbats),len(initial_values)),dtype=np.float128)
     ts = np.zeros((len(bbats),3),dtype=np.float128)
@@ -441,10 +468,12 @@ def report(F, correlations=True, correlation_threshold=0.5):
 
 class Fitter(object):
 
-    def __init__(self, files=None, only_tels=None, tzrmjd_middle=False, use_delta=False, ppn_mode=None):
+    def __init__(self, files=None, only_tels=None, tzrmjd_middle=False,
+                 ppn_mode=None,matrix_mode=0,priors=[]):
         self.base_mjd = 55920
 
         self.ppn_mode = ppn_mode
+        self.matrix_mode = matrix_mode
 
         self.files = files
         if files is not None:
@@ -485,58 +514,117 @@ class Fitter(object):
             self.tzrmjd_base = 56100
 
         if ppn_mode=='GR':
-            self.best_parameters = {'acosi_i': 1.4901030967375510719,
-                                    'acosi_o': 91.404576971516813065,
-                                    'asini_i': 1.2175265855988132598,
-                                    'asini_o': 74.672701347664255593,
-                                    'delta_lan': 4.4301423835961980434e-05,
-                                    'eps1_i': 0.00068720390971564635379,
-                                    'eps1_o': 0.035186254399129720146,
-                                    'eps2_i': -9.2091753419594045115e-05,
-                                    'eps2_o': -0.0034621771473608687653,
-                                    'f0': 365.95336876913063498,
-                                    'f1': -2.3671254865566901149e-15,
-                                    'j_AO1350': 5.3185599380177846881e-05,
-                                    'j_AO1440': 4.9318510611301893706e-05,
-                                    'j_AO327': 6.4728773533524038381e-05,
-                                    'j_GBT1500': 6.2578922197013576212e-05,
-                                    'j_GBT350': 1.8857498061175077805e-05,
-                                    'j_GBT820': 6.6997790068967559975e-05,
-                                    'j_WSRT350': -3.6107393277047654665e-05,
-                                    'pb_i': 1.6293969144593854897,
-                                    'pb_o': 327.2574963302058059,
-                                    'q_i': 0.1373907308547224033,
-                                    'tasc_i': 0.4075188737840608819,
-                                    'tasc_o': 313.93557293857620763,
-                                    'tzrmjd': 0.00073697113297647244393,
+            self.best_parameters = {'acosi_i': 1.4906026211744192515,
+                                    'acosi_o': 91.453065118685124314,
+                                    'asini_i': 1.2175266047808866331,
+                                    'asini_o': 74.672700468366484887,
+                                    'delta_lan': 5.2353855210995293526e-05,
+                                    'eps1_i': 0.00068719604775401053302,
+                                    'eps1_o': 0.035186254843922239968,
+                                    'eps2_i': -9.1163411686135514914e-05,
+                                    'eps2_o': -0.0034621826187927286935,
+                                    'f0': 365.95336878765835825,
+                                    'f1': -2.367551134398903217e-15,
+                                    'j_AO1350': 5.3640176483617157027e-05,
+                                    'j_AO1440': 4.9281699599778873326e-05,
+                                    'j_AO327': 6.4576160195110970455e-05,
+                                    'j_GBT1500': 6.2632330682031055911e-05,
+                                    'j_GBT350': 1.8912917353649653683e-05,
+                                    'j_GBT820': 6.7122531544511291428e-05,
+                                    'j_WSRT350': -3.6063906052781441954e-05,
+                                    'pb_i': 1.6293969135798415743,
+                                    'pb_o': 327.25749144039879118,
+                                    'q_i': 0.13733426409023540548,
+                                    'tasc_i': 0.40751890523964545538,
+                                    'tasc_o': 313.93556809302752883,
+                                    'tzrmjd': 0.00073696110357681842906,
+                                    'ppn_mode':ppn_mode}
+        elif ppn_mode=='heavypsr':
+            self.best_parameters = {'acosi_i': 1.4873433738543529733,
+                                    'acosi_o': 91.242326351367612186,
+                                    'asini_i': 1.2175264827828525039,
+                                    'asini_o': 74.672698385161426896,
+                                    'delta_lan': 7.1684252631099658106e-05,
+                                    'eps1_i': 0.0006872056215845256566,
+                                    'eps1_o': 0.035186244002010114014,
+                                    'eps2_i': -9.1143778218827033487e-05,
+                                    'eps2_o': -0.0034622241599546174239,
+                                    'f0': 365.95336874429373028,
+                                    'f1': -2.3644250364981500942e-15,
+                                    'j_AO1350': 5.3822250450223710867e-05,
+                                    'j_AO1440': 4.9297916980443640133e-05,
+                                    'j_AO327': 6.4840513155847946233e-05,
+                                    'j_GBT1500': 6.2634984004427234927e-05,
+                                    'j_GBT350': 1.8932165144366714454e-05,
+                                    'j_GBT820': 6.7213691245692210278e-05,
+                                    'j_WSRT350': -3.6030287674891245844e-05,
+                                    'pb_i': 1.6293969390954383544,
+                                    'pb_o': 327.25746779120826885,
+                                    'q_i': 0.13718415132314293601,
+                                    'tasc_i': 0.40751897624892704001,
+                                    'tasc_o': 313.93554448943305324,
+                                    'tzrmjd': 0.00073698456346227384467,
                                     'delta': 0.,
+                                    'dgamma': 0.,
+                                    'dbeta': 0.,
+                                    'dmbeta': 0.,
+                                    'dmpbeta': 0.,
+                                    'dlambda': 0.,
+                                    'ppn_mode':ppn_mode}
+        elif ppn_mode=='heavysimple':
+            self.best_parameters = {'acosi_i': 1.4906026211744192515,
+                                    'acosi_o': 91.453065118685124314,
+                                    'asini_i': 1.2175266047808866331,
+                                    'asini_o': 74.672700468366484887,
+                                    'delta_lan': 5.2353855210995293526e-05,
+                                    'eps1_i': 0.00068719604775401053302,
+                                    'eps1_o': 0.035186254843922239968,
+                                    'eps2_i': -9.1163411686135514914e-05,
+                                    'eps2_o': -0.0034621826187927286935,
+                                    'f0': 365.95336878765835825,
+                                    'f1': -2.367551134398903217e-15,
+                                    'j_AO1350': 5.3640176483617157027e-05,
+                                    'j_AO1440': 4.9281699599778873326e-05,
+                                    'j_AO327': 6.4576160195110970455e-05,
+                                    'j_GBT1500': 6.2632330682031055911e-05,
+                                    'j_GBT350': 1.8912917353649653683e-05,
+                                    'j_GBT820': 6.7122531544511291428e-05,
+                                    'j_WSRT350': -3.6063906052781441954e-05,
+                                    'pb_i': 1.6293969135798415743,
+                                    'pb_o': 327.25749144039879118,
+                                    'q_i': 0.13733426409023540548,
+                                    'tasc_i': 0.40751890523964545538,
+                                    'tasc_o': 313.93556809302752883,
+                                    'tzrmjd': 0.00073696110357681842906,
+                                    'delta': 0.,
+                                    'dgamma': 0.,
+                                    'dbeta': 0.,
                                     'ppn_mode':ppn_mode}
         else:
-            # FIXME: dig up old best_parameters from no GR
-            self.best_parameters = {'acosi_i': 1.4901030967375510719,
-                                    'acosi_o': 91.404576971516813065,
-                                    'asini_i': 1.2175265855988132598,
-                                    'asini_o': 74.672701347664255593,
-                                    'delta_lan': 4.4301423835961980434e-05,
-                                    'eps1_i': 0.00068720390971564635379,
-                                    'eps1_o': 0.035186254399129720146,
-                                    'eps2_i': -9.2091753419594045115e-05,
-                                    'eps2_o': -0.0034621771473608687653,
-                                    'f0': 365.95336876913063498,
-                                    'f1': -2.3671254865566901149e-15,
-                                    'j_AO1350': 5.3185599380177846881e-05,
-                                    'j_AO1440': 4.9318510611301893706e-05,
-                                    'j_AO327': 6.4728773533524038381e-05,
-                                    'j_GBT1500': 6.2578922197013576212e-05,
-                                    'j_GBT350': 1.8857498061175077805e-05,
-                                    'j_GBT820': 6.6997790068967559975e-05,
-                                    'j_WSRT350': -3.6107393277047654665e-05,
-                                    'pb_i': 1.6293969144593854897,
-                                    'pb_o': 327.2574963302058059,
-                                    'q_i': 0.1373907308547224033,
-                                    'tasc_i': 0.4075188737840608819,
-                                    'tasc_o': 313.93557293857620763,
-                                    'tzrmjd': 0.00073697113297647244393,
+            self.best_parameters = {'acosi_i': 1.4897512309364032182,
+                                    'acosi_o': 91.405222956349563575,
+                                    'asini_i': 1.2175284110910000383,
+                                    'asini_o': 74.672706589186479895,
+                                    'delta_lan': 4.4997457847240715185e-05,
+                                    'eps1_i': 0.00068567992627219061034,
+                                    'eps1_o': 0.035186277262748266567,
+                                    'eps2_i': -9.1703601334744808214e-05,
+                                    'eps2_o': -0.0034621357494614838778,
+                                    'f0': 365.95336876828093142,
+                                    'f1': -2.364687285778532507e-15,
+                                    'j_AO1350': 5.3641238667186069583e-05,
+                                    'j_AO1440': 4.925776005523900913e-05,
+                                    'j_AO327': 6.4826272356132399818e-05,
+                                    'j_GBT1500': 6.2633227769674327866e-05,
+                                    'j_GBT350': 1.8889994453734670414e-05,
+                                    'j_GBT820': 6.70941622308364694e-05,
+                                    'j_WSRT350': -3.6060163707294031334e-05,
+                                    'pb_i': 1.6294017513810860983,
+                                    'pb_o': 327.2575331382442386,
+                                    'q_i': 0.13735071517551612682,
+                                    'tasc_i': 0.40751933959268480401,
+                                    'tasc_o': 313.93560900860314167,
+                                    'tzrmjd': 0.00013931410186979548893,
                                     'delta': 0.,
                                     'ppn_mode':ppn_mode}
         self.best_errors = {'acosi_i': 8.32004394868322e-08,
@@ -563,20 +651,29 @@ class Fitter(object):
                             'tasc_i': 7.451846424579363e-09,
                             'tasc_o': 3.5744992868852454e-08,
                             'tzrmjd': 6.894185939775915e-13,
-                            'delta': 1e-3,
+                            'delta': 1e-4,
+                            'dgamma': 1e-4,
+                            'dbeta': 1e-4,
+                            'dmbeta': 1e-4,
+                            'dmpbeta': 1e-4,
+                            'dlambda': 1e-4,
                             'ppn_mode':ppn_mode}
         self.parameters = ['asini_i', 'pb_i', 'eps1_i', 'eps2_i', 'tasc_i',
                            'acosi_i', 'q_i',
                            'asini_o', 'pb_o', 'eps1_o', 'eps2_o', 'tasc_o',
                            'acosi_o', 'delta_lan',
                            'tzrmjd', 'f0', 'f1']
-        if use_delta:
-            self.parameters.append('delta')
+        if ppn_mode=='heavypsr':
+            self.parameters.extend([
+                'delta','dgamma','dbeta','dmbeta','dmpbeta','dlambda'])
+        if ppn_mode=='heavysimple':
+            self.parameters.extend(['delta','dgamma','dbeta'])
         self.phase_uncerts = self.uncerts*self.best_parameters['f0']
         self.jmatrix, self.jnames = trend_matrix(
             self.mjds, self.tel_list, self.tels,
             const=False, P=False, Pdot=False, jumps=True)
         self.parameters += self.jnames
+        self.priors = frozenset(priors)
 
     def residuals(self, p):
         jumps = np.dot(self.jmatrix,np.array([p[n] for n in self.jnames]))
@@ -589,16 +686,28 @@ class Fitter(object):
         phase -= p['f0']*tzrmjd_s+p['f1']*tzrmjd_s**2/2.
         return phase-self.pulses
 
+    def lnprior(self, p):
+        l = 0
+        if 'dbeta' in self.priors:
+            l += (p['dbeta']/3e-3)**2
+        if 'dgamma' in self.priors:
+            l += (p['dgamma']/2.3e-5)**2
+        if 'delta' in self.priors:
+            l += (p['delta']/6e-3)**2
+        return -l/2.
+
     def mfun(self, asini_i, pb_i, eps1_i, eps2_i, tasc_i,
             acosi_i, q_i,
             asini_o, pb_o, eps1_o, eps2_o, tasc_o,
             acosi_o, delta_lan,
             tzrmjd, f0, f1,
+            delta, dgamma, dbeta,
             j_AO1350,
             j_AO1440, j_AO327, j_GBT1500,
             j_GBT350, j_GBT820,
             j_WSRT350):
         ppn_mode = self.ppn_mode
+        matrix_mode = self.matrix_mode
         r = self.residuals(locals())
         return np.sum((r/self.phase_uncerts)**2)
 

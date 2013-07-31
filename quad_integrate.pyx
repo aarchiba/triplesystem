@@ -2,7 +2,7 @@
 # distutils: include_dirs = include
 # distutils: libraries = quadmath
 # distutils: depends = extra.hpp quad_defs.hpp ppn.hpp
-# distutils: extra_compile_args = -O -march=native
+# distutils: extra_compile_args = -march=native
 
 import sys
 
@@ -32,11 +32,14 @@ cdef extern from "extra.hpp":
     void vectl_set(vectl*v, size_t i, longdouble e)
     ctypedef void (*callback_function)(
             vectq*x, vectq*dxdt, quad t, void* arg) except *
+    longdouble quad_to_longdouble(quad q)
 
     cdef cppclass CRHS[num]:
         CRHS(void (*cb)(vector[num]*,vector[num]*,num,void*), void*arg) except +
         void evaluate(vector[num] &x, vector[num] &dxdt, num t) except +
     cdef cppclass cKeplerRHS[num]:
+        num gamma
+        num beta
         cKeplerRHS(int special, int general, long long&evals, num delta,
                    int ppn_motion, num gamma, num beta,
                    num Gamma01, num Gamma02, num Gamma12,
@@ -47,8 +50,8 @@ cdef extern from "extra.hpp":
                    int matrix_mode, num c_scale) except +
         void evaluate(vector[num] *x, vector[num] *dxdt, num t) except +
         long long n_evaluations()
-    cdef longdouble shapiro_delay(vectl&x)
-    cdef quad shapiro_delay(vectq&x)
+    cdef longdouble shapiro_delay(vectl&x, longdouble gamma)
+    cdef quad shapiro_delay(vectq&x, quad gamma)
 
     cdef cppclass bulirsch_stoer_dense_out[vect,num]:
         bulirsch_stoer_dense_out(num, num, num, num, bool)
@@ -58,12 +61,20 @@ cdef extern from "extra.hpp":
         vect&previous_state()
         num current_time()
         num previous_time()
-    #void do_step_dense(CRHS[quad]&rhs,
+    # WARNING: boost's float128s use enough template magic that they can make
+    # compilation melt down when handed the gigantic generated RHSs that come
+    # out of sympy. One way to fix this would be to instead pass __float128s
+    # into that function.
+
+    #void do_step_dense(cKeplerRHS[quad]&rhs,
     #        bulirsch_stoer_dense_out[vectq,quad]&stepper)
-    void do_step_dense(cKeplerRHS[longdouble]&rhs,
-            bulirsch_stoer_dense_out[vectl,longdouble]&stepper)
+    #void previous_state(bulirsch_stoer_dense_out[vectq,quad]&stepper,
+    #        vectq&x)
     #void current_state(bulirsch_stoer_dense_out[vectq,quad]&stepper,
     #        vectq&x)
+
+    void do_step_dense(cKeplerRHS[longdouble]&rhs,
+            bulirsch_stoer_dense_out[vectl,longdouble]&stepper)
     void previous_state(bulirsch_stoer_dense_out[vectl,longdouble]&stepper,
             vectl&x)
     void current_state(bulirsch_stoer_dense_out[vectl,longdouble]&stepper,
@@ -96,7 +107,7 @@ cdef np.ndarray[DTYPE_t, ndim=1] vectq_to_array(vectq* v):
     cdef np.ndarray[DTYPE_t, ndim=1] x
     x = np.empty(v.size(), dtype=DTYPE)
     for i in range(v.size()):
-        x[i] = v.at(i)
+        x[i] = quad_to_longdouble(v.at(i))
     return x
 
 cdef vectl* array_to_vectl(np.ndarray[DTYPE_t, ndim=1] x) except NULL:
@@ -113,7 +124,7 @@ cdef np.ndarray[DTYPE_t, ndim=1] vectl_to_array(vectl* v):
 
 # FIXME: these suck.
 @cython.boundscheck(False)
-cdef quad_to_py(DTYPE_t x):
+cdef quad_to_py(quad x):
     # this is strange-looking because assigning to a cdefed
     # array doesn't go through a python float, but reading
     # out from it goes through a python float rather than
@@ -121,7 +132,7 @@ cdef quad_to_py(DTYPE_t x):
     # non-cdefed array and get out an array scalar.
     cdef np.ndarray[DTYPE_t, ndim=1] v
     v = np.empty(1, dtype=DTYPE)
-    v[0] = x
+    v[0] = quad_to_longdouble(x)
     return v.copy()[0]
 @cython.boundscheck(False)
 cdef quad py_to_quad(x) except (<quad> FLT128_MAX):
@@ -145,10 +156,10 @@ cdef longdouble py_to_longdouble(x):
     xa = np.array([x],dtype=DTYPE)
     return xa[<unsigned>0]
 
-def shapiro_delay_l(x):
+def shapiro_delay_l(x,gamma):
     cdef vectl *_x
     _x = array_to_vectl(np.asarray(x,dtype=DTYPE))
-    r = shapiro_delay(_x[0])
+    r = shapiro_delay(_x[0],py_to_longdouble(gamma))
     del _x
     return r
 
@@ -156,10 +167,12 @@ cdef class ODEDelay:
     cdef longdouble _t_psr
     cdef longdouble _t_d
     cdef longdouble _t_bb
+    cdef longdouble _atol, _rtol
     cdef vectl* _x
     cdef quad _t_psr_q
     cdef quad _t_d_q
     cdef quad _t_bb_q
+    cdef quad _atol_q, _rtol_q
     cdef vectq* _x_q
     cdef int _n
     cdef int using_quad
@@ -169,7 +182,7 @@ cdef class ODEDelay:
 
     cdef bulirsch_stoer_dense_out[vectl,longdouble]* _stepper
     cdef cKeplerRHS[longdouble]* _krhs
-    #cdef bulirsch_stoer_dense_out[vectq,quad]* _stepper_q
+    cdef bulirsch_stoer_dense_out[vectq,quad]* _stepper_q
     cdef cKeplerRHS[quad]* _krhs_q
     cdef object pyrhs
 
@@ -192,20 +205,24 @@ cdef class ODEDelay:
 
         self._t_d = py_to_longdouble(t_d)
         self._t_d_q = py_to_quad(t_d)
+        self._atol = py_to_longdouble(atol)
+        self._atol_q = py_to_quad(atol)
+        self._rtol = py_to_longdouble(rtol)
+        self._rtol_q = py_to_quad(rtol)
         self._stepper = new bulirsch_stoer_dense_out[vectl,longdouble](
                 atol, rtol, 1, 1, True)
         self._stepper.initialize(self._x[0], self._t_d, initial_dt)
-        #self._stepper_q = new bulirsch_stoer_dense_out[vectq,quad](
-        #        py_to_quad(atol), py_to_quad(rtol),
-        #        py_to_quad(1), py_to_quad(1), True)
-        #self._stepper_q.initialize(self._x_q[0], self._t_d_q,
-        #                           py_to_quad(initial_dt))
+        self._stepper_q = new bulirsch_stoer_dense_out[vectq,quad](
+                py_to_quad(atol), py_to_quad(rtol),
+                py_to_quad(1), py_to_quad(1), True)
+        self._stepper_q.initialize(self._x_q[0], self._t_d_q,
+                                   py_to_quad(initial_dt))
 
     def __dealloc__(self):
         del self._x
         del self._stepper
         del self._x_q
-        #del self._stepper_q
+        del self._stepper_q
 
     cdef longdouble delay(self, vectl&x):
         cdef longdouble d
@@ -213,7 +230,7 @@ cdef class ODEDelay:
         if self.roemer:
             d += x.at(2)/86400.
         if self.shapiro:
-            d += shapiro_delay(x)
+            d += shapiro_delay(x,self._krhs.gamma)
         if False and x.size()>21: # This should include only propagation delays
             d += x.at(21)
         return d
@@ -223,7 +240,7 @@ cdef class ODEDelay:
         if self.roemer:
             d += x.at(2)/86400.
         if self.shapiro:
-            d += shapiro_delay(x)
+            d += shapiro_delay(x,self._krhs_q.gamma)
         if False and x.size()>21: # This should include only propagation delays
             d += x.at(21)
         return d
@@ -235,30 +252,30 @@ cdef class ODEDelay:
         cdef longdouble before_t_d, after_t_d, temp_t_d
         cdef longdouble before_t_bb, after_t_bb, temp_t_bb
         cdef longdouble w, oldw
-        cdef longdouble thresh = 1e-10/86400.
+        cdef longdouble thresh = self._rtol
 
         cdef quad _t_bb_q
         cdef quad d_q
         cdef quad before_t_d_q, after_t_d_q, temp_t_d_q
         cdef quad before_t_bb_q, after_t_bb_q, temp_t_bb_q
         cdef quad w_q, oldw_q
-        cdef quad thresh_q = 1e-10/86400.
+        cdef quad thresh_q = self._rtol_q
 
         if self.using_quad:
             _t_bb_q = py_to_quad(t_bb)
             while True:
-                #current_state(self._stepper_q[0], self._x_q[0])
-                #after_t_d_q = self._stepper_q.current_time()
+                current_state(self._stepper_q[0], self._x_q[0])
+                after_t_d_q = self._stepper_q.current_time()
                 d_q = self.delay_q(self._x_q[0])
                 if after_t_d_q+d_q>_t_bb_q:
                     break
-                #do_step_dense(self._krhs_q[0],self._stepper_q[0])
+                do_step_dense(self._krhs_q[0],self._stepper_q[0])
             # compute state by interpolation
 
             after_t_bb_q = after_t_d_q+d_q
 
-            #before_t_d_q = self._stepper_q.previous_time()
-            #previous_state(self._stepper_q[0], self._x_q[0])
+            before_t_d_q = self._stepper_q.previous_time()
+            previous_state(self._stepper_q[0], self._x_q[0])
             before_t_bb_q = before_t_d_q + self.delay_q(self._x_q[0])
 
             if before_t_bb_q>=_t_bb_q:
@@ -277,7 +294,7 @@ cdef class ODEDelay:
                                before_t_d_q*(after_t_bb_q-_t_bb_q))/(after_t_bb_q-before_t_bb_q)
                 oldw_q = w_q
 
-                #self._stepper_q.calc_state(temp_t_d_q, self._x_q[0])
+                self._stepper_q.calc_state(temp_t_d_q, self._x_q[0])
                 temp_t_bb_q = temp_t_d_q+self.delay_q(self._x_q[0])
                 if -thresh_q<temp_t_bb_q-_t_bb_q<thresh_q:
                     break
@@ -289,7 +306,18 @@ cdef class ODEDelay:
                     before_t_d_q = temp_t_d_q
                     before_t_bb_q = temp_t_bb_q
                 if after_t_d_q-before_t_d_q<thresh_q/100:
-                    raise ValueError("Convergence failure: %s" % locals())
+                    raise ValueError("""Convergence failure:
+                        before_t_d = %s
+                        after_t_d = %s
+                        before_t_bb = %s
+                        t_bb = %s
+                        after_t_bb = %s
+                        """ % (quad_to_py(before_t_d_q),
+                               quad_to_py(after_t_d_q),
+                               quad_to_py(before_t_bb_q),
+                               quad_to_py(_t_bb_q),
+                               quad_to_py(after_t_bb_q))
+                               )
             self._t_d_q = temp_t_d_q
             self._t_bb_q = temp_t_bb_q
             self._t_psr_q = temp_t_d_q
@@ -340,7 +368,7 @@ cdef class ODEDelay:
                     before_t_d = temp_t_d
                     before_t_bb = temp_t_bb
                 if after_t_d-before_t_d<thresh/100:
-                    raise ValueError("Convergence failure: %s" % locals())
+                    raise ValueError("Convergence failure")
             self._t_d = temp_t_d
             self._t_bb = temp_t_bb
             self._t_psr = temp_t_d

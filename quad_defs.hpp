@@ -1,3 +1,9 @@
+#include <iostream>
+#include <vector>
+#include <float.h>
+#include <limits>
+#include <cmath>
+
 extern "C" {
 #include <quadmath.h>
 }
@@ -19,7 +25,8 @@ class quad {
         const quad& operator /=(const quad&e) { v/=e.v; return *this; };
         //quad operator-() { return quad(-v); };
 };
-typedef vector<quad> vectq;
+
+typedef std::vector<quad> vectq;
 
 // blerg. C++ type inference is *terrible*.
 quad operator+(const quad&b, const quad&e) { return quad(b.v+e.v); }
@@ -149,10 +156,10 @@ namespace std {
     inline quad sqrt(quad b) {
         return sqrtq(b);
     }
-    ostream& operator<<(ostream& ost, const quad&q) {
+    inline ostream& operator<<(ostream& ost, const quad&q) {
         return ost<<((long double)q.v);
     }
-    istream& operator>>(istream& ist, quad&q) {
+    inline istream& operator>>(istream& ist, quad&q) {
         long double qq;
         ist>>qq;
         q = qq;
@@ -216,7 +223,7 @@ namespace std {
 
       static _GLIBCXX_USE_CONSTEXPR bool traps = false; // don't know
       static _GLIBCXX_USE_CONSTEXPR bool tinyness_before = false; // don't know
-      static _GLIBCXX_USE_CONSTEXPR float_round_style round_style 
-       = round_to_nearest;
+      static _GLIBCXX_USE_CONSTEXPR float_round_style round_style  = round_to_nearest;
     };
 }
+
