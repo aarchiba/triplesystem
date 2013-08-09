@@ -94,7 +94,8 @@ void ppn(const quad xv[21],
     const quad Theta01, const quad Theta02, const quad Theta12,
     const quad Gamma011, const quad Gamma012, const quad Gamma022,
     const quad Gamma100, const quad Gamma102, const quad Gamma122,
-    const quad Gamma200, const quad Gamma201, const quad Gamma211) {
+    const quad Gamma200, const quad Gamma201, const quad Gamma211,
+    const quad Omega, const quad Rc, const quad k2) {
   __float128 xvf[21];
   __float128 Mf[9][9];
   __float128 bf[9];
@@ -102,12 +103,13 @@ void ppn(const quad xv[21],
     xvf[i] = xv[i].backend().value();
   }
   ppn(xvf, Mf, bf,
-	     gamma.backend().value(), beta.backend().value(),
-	     Gamma01.backend().value(), Gamma02.backend().value(), Gamma12.backend().value(), 
-	     Theta01.backend().value(), Theta02.backend().value(), Theta12.backend().value(),
-	     Gamma011.backend().value(), Gamma012.backend().value(), Gamma022.backend().value(),
-	     Gamma100.backend().value(), Gamma102.backend().value(), Gamma122.backend().value(),
-	     Gamma200.backend().value(), Gamma201.backend().value(), Gamma211.backend().value());
+      gamma.backend().value(), beta.backend().value(),
+      Gamma01.backend().value(), Gamma02.backend().value(), Gamma12.backend().value(), 
+      Theta01.backend().value(), Theta02.backend().value(), Theta12.backend().value(),
+      Gamma011.backend().value(), Gamma012.backend().value(), Gamma022.backend().value(),
+      Gamma100.backend().value(), Gamma102.backend().value(), Gamma122.backend().value(),
+      Gamma200.backend().value(), Gamma201.backend().value(), Gamma211.backend().value(),
+      Omega.backend().value(), Rc.backend().value(), k2.backend().value());
   for(int i=0;i<9;i++) {
     b[i] = bf[i];
     for(int j=0;j<9;j++) {
@@ -122,7 +124,8 @@ void ppn_direct(const quad xv[21],
     const quad Theta01, const quad Theta02, const quad Theta12,
     const quad Gamma011, const quad Gamma012, const quad Gamma022,
     const quad Gamma100, const quad Gamma102, const quad Gamma122,
-    const quad Gamma200, const quad Gamma201, const quad Gamma211) {
+    const quad Gamma200, const quad Gamma201, const quad Gamma211,
+    const quad Omega, const quad Rc, const quad k2) {
   __float128 xvf[21];
   __float128 af[9];
   for(int i=0;i<21;i++) {
@@ -134,7 +137,8 @@ void ppn_direct(const quad xv[21],
 	     Theta01.backend().value(), Theta02.backend().value(), Theta12.backend().value(),
 	     Gamma011.backend().value(), Gamma012.backend().value(), Gamma022.backend().value(),
 	     Gamma100.backend().value(), Gamma102.backend().value(), Gamma122.backend().value(),
-	     Gamma200.backend().value(), Gamma201.backend().value(), Gamma211.backend().value());
+	     Gamma200.backend().value(), Gamma201.backend().value(), Gamma211.backend().value(),
+	     Omega.backend().value(), Rc.backend().value(), k2.backend().value());
   for(int i=0;i<9;i++) {
     a[i] = af[i];
   }
@@ -151,9 +155,11 @@ void compute_ppn_rhs(const num x[], num dxdt[], const num gamma, const num beta,
 		     const num Gamma011, const num Gamma012, const num Gamma022,
 		     const num Gamma100, const num Gamma102, const num Gamma122,
 		     const num Gamma200, const num Gamma201, const num Gamma211,
+		     const num Omega, const num Rc, const num k2,
 		     const int matrix_mode, const num c_scale) {
   num x_scaled[21]; // unitless velocity, mass in lt-s
   num m0, m1, m2; // geometrized masses
+  num Omega_scaled; // rescale time
   for(int k=0;k<3;k++) {
     for(int l=0;l<3;l++) {
       x_scaled[7*k+l] = x[7*k+l];
@@ -161,6 +167,7 @@ void compute_ppn_rhs(const num x[], num dxdt[], const num gamma, const num beta,
     }
     x_scaled[7*k+6] = x[7*k+6]*G/c2/c_scale/c_scale;
   }
+  Omega_scaled = Omega/c_/c_scale;
   m0 = x_scaled[6];
   m1 = x_scaled[13];
   m2 = x_scaled[20];
@@ -171,7 +178,8 @@ void compute_ppn_rhs(const num x[], num dxdt[], const num gamma, const num beta,
 	       Theta01*m0*m1,Theta02*m0*m2,Theta12*m1*m2,
 	       Gamma011*m0*m1*m1, Gamma012*m0*m1*m2, Gamma022*m0*m2*m2,
 	       Gamma100*m1*m0*m0, Gamma102*m1*m0*m2, Gamma122*m1*m2*m2,
-	       Gamma200*m2*m0*m0, Gamma201*m2*m0*m1, Gamma211*m2*m1*m1);
+	       Gamma200*m2*m0*m0, Gamma201*m2*m0*m1, Gamma211*m2*m1*m1,
+	       Omega_scaled, Rc, k2);
     for(int j=0;j<3;j++) {
       for(int i=0;i<3;i++) {
 	dxdt[j*7+i] = x[j*7+i+3];
@@ -189,7 +197,8 @@ void compute_ppn_rhs(const num x[], num dxdt[], const num gamma, const num beta,
 	  Theta01*m0*m1,Theta02*m0*m2,Theta12*m1*m2,
 	  Gamma011*m0*m1*m1, Gamma012*m0*m1*m2, Gamma022*m0*m2*m2,
 	  Gamma100*m1*m0*m0, Gamma102*m1*m0*m2, Gamma122*m1*m2*m2,
-	  Gamma200*m2*m0*m0, Gamma201*m2*m0*m1, Gamma211*m2*m1*m1);
+	  Gamma200*m2*m0*m0, Gamma201*m2*m0*m1, Gamma211*m2*m1*m1,
+	  Omega, Rc, k2);
     } else {
       newton_lagrangian(x_scaled,M,b);
     }
@@ -218,19 +227,20 @@ void compute_ppn_rhs(const num x[], num dxdt[], const num gamma, const num beta,
 template<class num>
 class cKeplerRHS {
         long long &evals;
+    public:
         const bool special, general;
         const num delta;
         const bool ppn_motion;
+        const num gamma;
+        const num beta;
         const num Gamma01, Gamma02, Gamma12;
         const num Theta01, Theta02, Theta12;
         const num Gamma011, Gamma012, Gamma022;
         const num Gamma100, Gamma102, Gamma122;
         const num Gamma200, Gamma201, Gamma211;
-        const int matrix_mode;
+        const num Omega, Rc, k2;
+	const int matrix_mode;
         const num c_scale;
-    public:
-        const num gamma;
-        const num beta;
         cKeplerRHS(bool special, bool general, long long&evals, num delta,
 		   bool ppn_motion, num gamma, num beta,
 		   num Gamma01, num Gamma02, num Gamma12,
@@ -238,6 +248,7 @@ class cKeplerRHS {
  		   num Gamma011, num Gamma012, num Gamma022,
 		   num Gamma100, num Gamma102, num Gamma122,
 		   num Gamma200, num Gamma201, num Gamma211,
+		   const num Omega, const num Rc, const num k2,
 		   int matrix_mode, num c_scale) : 
 	  evals(evals), special(special), general(general), delta(delta),
           ppn_motion(ppn_motion), gamma(gamma), beta(beta),
@@ -245,8 +256,9 @@ class cKeplerRHS {
           Theta01(Theta01), Theta02(Theta02), Theta12(Theta12),
 	  Gamma011(Gamma011), Gamma012(Gamma012), Gamma022(Gamma022), 
 	  Gamma100(Gamma100), Gamma102(Gamma102), Gamma122(Gamma122), 
-	  Gamma200(Gamma200), Gamma201(Gamma201), Gamma211(Gamma211), 
-	matrix_mode(matrix_mode), c_scale(c_scale) { };
+	  Gamma200(Gamma200), Gamma201(Gamma201), Gamma211(Gamma211),
+	  Omega(Omega), Rc(Rc), k2(k2),
+	  matrix_mode(matrix_mode), c_scale(c_scale) { };
         
         void kepler(const num x[], num dxdt[], const num t) {
             unsigned int i,j,k;
@@ -261,6 +273,7 @@ class cKeplerRHS {
  			      Gamma011, Gamma012, Gamma022,
 			      Gamma100, Gamma102, Gamma122,
 			      Gamma200, Gamma201, Gamma211,
+			      Omega, Rc, k2,
 			      matrix_mode, c_scale);
 	    } else if (delta==0) {
 	      for (i=0;i<3;i++) {

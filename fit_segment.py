@@ -38,7 +38,7 @@ with open(args.temptim, "wt") as temptim:
                 temppulses.write(pulseline)
                 n += 1
 if n==0:
-    raise ValueError("Input MJD past end of simulated TOAs")
+    raise ValueError("Input MJD past end or before beginning of simulated TOAs")
 
 osculating_parameters = np.loadtxt(args.oscfilename)
 i = np.searchsorted(osculating_parameters[:,0],args.MJD)

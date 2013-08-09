@@ -47,6 +47,7 @@ cdef extern from "extra.hpp":
                    num Gamma011, num Gamma012, num Gamma022,
                    num Gamma100, num Gamma102, num Gamma122,
                    num Gamma200, num Gamma201, num Gamma211,
+                   num Omega, num Rc, num k2,
                    int matrix_mode, num c_scale) except +
         void evaluate(vector[num] *x, vector[num] *dxdt, num t) except +
         long long n_evaluations()
@@ -460,6 +461,7 @@ cdef class KeplerRHS(RHS):
                  Gamma011=1, Gamma012=1, Gamma022=1,
                  Gamma100=1, Gamma102=1, Gamma122=1,
                  Gamma200=1, Gamma201=1, Gamma211=1,
+                 Omega=0, Rc=0, k2=0,
                  matrix_mode=0, c_scale=1):
         self._krhs=new cKeplerRHS[quad](special, general, self._evals,
             py_to_quad(delta), ppn_motion,
@@ -469,6 +471,7 @@ cdef class KeplerRHS(RHS):
             py_to_quad(Gamma011), py_to_quad(Gamma012), py_to_quad(Gamma022),
             py_to_quad(Gamma100), py_to_quad(Gamma102), py_to_quad(Gamma122),
             py_to_quad(Gamma200), py_to_quad(Gamma201), py_to_quad(Gamma211),
+            py_to_quad(Omega), py_to_quad(Rc), py_to_quad(k2),
             matrix_mode, py_to_quad(c_scale))
         self._krhs_l=new cKeplerRHS[longdouble](special, general, self._evals,
             py_to_longdouble(delta), ppn_motion,
@@ -478,6 +481,7 @@ cdef class KeplerRHS(RHS):
             py_to_longdouble(Gamma011), py_to_longdouble(Gamma012), py_to_longdouble(Gamma022),
             py_to_longdouble(Gamma100), py_to_longdouble(Gamma102), py_to_longdouble(Gamma122),
             py_to_longdouble(Gamma200), py_to_longdouble(Gamma201), py_to_longdouble(Gamma211),
+            py_to_longdouble(Omega), py_to_longdouble(Rc), py_to_longdouble(k2),
             matrix_mode, py_to_longdouble(c_scale))
     cdef int _evaluate(self, vectq*x, vectq*dxdt, quad t) except -1:
         self._krhs.evaluate(x, dxdt, t)

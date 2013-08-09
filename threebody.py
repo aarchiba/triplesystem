@@ -106,70 +106,6 @@ def load_toas(timfile = '0337+17.tim',
     ix = np.argsort(t2_bats)
     return t2_bats[ix], pulses[ix], tel_list, tels[ix], errs[ix]
 
-best_parameters = [
-	1.2175286574040021089 ,
-	1.6294017424245676595 ,
-	0.00068569767885231061913 ,
-	-9.167915208909978898e-05 ,
-	0.40748888446707576171 ,
-	1.4928413805962691032 ,
-	0.13739679461335577318 ,
-	74.672709181427526108 ,
-	327.25754395677783318 ,
-	-0.0034621278217266577593 ,
-	0.035186272495204991849 ,
-	313.93558318886735767 ,
-	91.611372740471614128 ,
-	-4.1110581185487967683e-05 ,
-]
-best_errors = [
-	1.7556575632954052e-08 ,
-	2.2817007892786326e-10 ,
-	1.6568485883029365e-08 ,
-	1.4557847466119638e-08 ,
-	8.663674326627852e-09 ,
-	2.6254576384333125e-05 ,
-	1.0288730471728326e-06 ,
-	2.140792343411674e-07 ,
-	3.322543685198226e-07 ,
-	7.601435134628213e-10 ,
-	6.106381168432414e-10 ,
-	2.1022233493158794e-07 ,
-	0.001609442571711061 ,
-	7.981798704760887e-06 ,
-]
-best_parameters_nogr = [
-	1.217529967691550754 ,
-	1.629401735908281567 ,
-	-9.1680933187314077105e-05 ,
-	0.00068607294788486786044 ,
-	0.4074892430788351937 ,
-	1.4861853088300347585 ,
-	0.13744418603049468959 ,
-	74.672663767844384898 ,
-	327.25756096585252719 ,
-	-0.0034618550185082725042 ,
-	0.035186307687828952724 ,
-	313.93597677179654973 ,
-	91.202189778972841357 ,
-	-4.4596707010768933897e-05 ,
-]
-best_errors_nogr = [
-	1.8624739061394744e-08 ,
-	3.625137710539212e-10 ,
-	1.9190728493949218e-08 ,
-	1.673908407209016e-08 ,
-	9.816045154137255e-09 ,
-	3.5860679776065874e-06 ,
-	1.7327413665307784e-06 ,
-	1.2327858353102708e-07 ,
-	4.1809524403587833e-07 ,
-	9.172363390894159e-10 ,
-	6.199662972285706e-10 ,
-	3.871106137895912e-07 ,
-	0.0017795929143580116 ,
-	7.70027304890772e-06 ,
-]
 def trend_matrix(mjds, tel_list, tels,
     const=True, P=True, Pdot=True, jumps=True,
     position=False, proper_motion=False, parallax=False,
@@ -320,7 +256,7 @@ def compute_orbit(parameter_dict, times):
 
     bbats = np.copy(bbats)
     bbats[bbats<0] = 0 # avoid epoch problems during wild guessing
-    in_order = not np.any(np.diff(bbats<0))
+    in_order = not np.any(np.diff(bbats)<0)
     if not in_order:
         ix = np.argsort(bbats)
         bbats = bbats[ix]
@@ -356,6 +292,13 @@ def compute_orbit(parameter_dict, times):
             gamma=1+dgamma, beta=1+dbeta,
             Gamma01=(1+delta), Gamma02=(1+delta), Gamma12=1,
             Theta01=mgammafac, Theta02=mgammafac, Theta12=1,
+            ppn_motion=True,matrix_mode=matrix_mode)
+    elif ppn_mode=='GRtidal':
+        Rc = parameter_dict['Rc']
+        k2 = parameter_dict['k2']
+        Omega = 2*np.pi*parameter_dict['Omega']/parameter_dict['pb_i']
+        rhs = quad_integrate.KeplerRHS(special=special, general=general,
+            Rc=Rc, k2=k2, Omega=Omega,
             ppn_motion=True,matrix_mode=matrix_mode)
     if special or general:
         initial_values = np.concatenate((initial_values, [0]))
@@ -488,13 +431,21 @@ class Fitter(object):
              self.tel_list, self.tels,
              self.uncerts) = load_toas()
 
+        tel_base = 'WSRT1400'
         # Zap any TOAs before base_mjd
         c = self.mjds>self.base_mjd
         if only_tels is not None:
             c2 = np.zeros(len(c),dtype=bool)
-            for t in only_tels:
-                c2 |= self.tels==self.tel_list.index(t)
+            new_tels = np.zeros_like(self.tels)
+            for i,t in enumerate(only_tels):
+                c3 = self.tels==self.tel_list.index(t)
+                new_tels[c3] = i
+                c2 |= c3
             c &= c2
+            if tel_base not in only_tels:
+                tel_base = only_tels[0]
+            self.tel_list = only_tels
+            self.tels = new_tels
         self.mjds = self.mjds[c]
         self.pulses = self.pulses[c]
         self.tels = self.tels[c]
@@ -572,6 +523,60 @@ class Fitter(object):
                                     'dlambda': 0.,
                                     'ppn_mode':ppn_mode}
         elif ppn_mode=='heavysimple':
+            if only_tels is None:
+                self.best_parameters = {'acosi_i': 1.4906026211744192515,
+                                        'acosi_o': 91.453065118685124314,
+                                        'asini_i': 1.2175266047808866331,
+                                        'asini_o': 74.672700468366484887,
+                                        'delta_lan': 5.2353855210995293526e-05,
+                                        'eps1_i': 0.00068719604775401053302,
+                                        'eps1_o': 0.035186254843922239968,
+                                        'eps2_i': -9.1163411686135514914e-05,
+                                        'eps2_o': -0.0034621826187927286935,
+                                        'f0': 365.95336878765835825,
+                                        'f1': -2.367551134398903217e-15,
+                                        'j_AO1350': 5.3640176483617157027e-05,
+                                        'j_AO1440': 4.9281699599778873326e-05,
+                                        'j_AO327': 6.4576160195110970455e-05,
+                                        'j_GBT1500': 6.2632330682031055911e-05,
+                                        'j_GBT350': 1.8912917353649653683e-05,
+                                        'j_GBT820': 6.7122531544511291428e-05,
+                                        'j_WSRT350': -3.6063906052781441954e-05,
+                                        'pb_i': 1.6293969135798415743,
+                                        'pb_o': 327.25749144039879118,
+                                        'q_i': 0.13733426409023540548,
+                                        'tasc_i': 0.40751890523964545538,
+                                        'tasc_o': 313.93556809302752883,
+                                        'tzrmjd': 0.00073696110357681842906,
+                                        'delta': 0.,
+                                        'dgamma': 0.,
+                                        'dbeta': 0.,
+                                        'ppn_mode':ppn_mode}
+            else:
+                self.best_parameters = {'acosi_i': 1.4906033204037845479,
+                                        'acosi_o': 91.453537653928273617,
+                                        'asini_i': 1.2175266537719722339,
+                                        'asini_o': 74.672698701219229013,
+                                        'dbeta': 5.7191502115773243353e-05,
+                                        'delta': 2.909245350070729933e-10,
+                                        'delta_lan': 2.2552060903748414945e-05,
+                                        'dgamma': 0.00024031215393884287665,
+                                        'eps1_i': 0.0006871891109980327791,
+                                        'eps1_o': 0.035186258880815693059,
+                                        'eps2_i': -9.1173169354080185174e-05,
+                                        'eps2_o': -0.0034621822880805571479,
+                                        'f0': 365.95336878788598192,
+                                        'f1': -2.3770186297708397142e-15,
+                                        'j_AO1350': 4.2455911293819890896e-06,
+                                        'j_GBT1500': 1.3358761564743342989e-05,
+                                        'pb_i': 1.6293969142760390811,
+                                        'pb_o': 327.2574890150262264,
+                                        'q_i': 0.13733417989036378996,
+                                        'tasc_i': 0.40751890919279329953,
+                                        'tasc_o': 313.93556780527461109,
+                                        'tzrmjd': 0.00078373426055538676625,
+                                        'ppn_mode':ppn_mode}
+        elif ppn_mode=='GRtidal':
             self.best_parameters = {'acosi_i': 1.4906026211744192515,
                                     'acosi_o': 91.453065118685124314,
                                     'asini_i': 1.2175266047808866331,
@@ -596,9 +601,9 @@ class Fitter(object):
                                     'tasc_i': 0.40751890523964545538,
                                     'tasc_o': 313.93556809302752883,
                                     'tzrmjd': 0.00073696110357681842906,
-                                    'delta': 0.,
-                                    'dgamma': 0.,
-                                    'dbeta': 0.,
+                                    'Rc': 0.2,
+                                    'k2': 1e-3,
+                                    'Omega': 1,
                                     'ppn_mode':ppn_mode}
         else:
             self.best_parameters = {'acosi_i': 1.4897512309364032182,
@@ -657,6 +662,9 @@ class Fitter(object):
                             'dmbeta': 1e-4,
                             'dmpbeta': 1e-4,
                             'dlambda': 1e-4,
+                            'Omega': 1e-2,
+                            'Rc': 1e-2,
+                            'k2': 1e-4,
                             'ppn_mode':ppn_mode}
         self.parameters = ['asini_i', 'pb_i', 'eps1_i', 'eps2_i', 'tasc_i',
                            'acosi_i', 'q_i',
@@ -666,11 +674,14 @@ class Fitter(object):
         if ppn_mode=='heavypsr':
             self.parameters.extend([
                 'delta','dgamma','dbeta','dmbeta','dmpbeta','dlambda'])
-        if ppn_mode=='heavysimple':
+        elif ppn_mode=='heavysimple':
             self.parameters.extend(['delta','dgamma','dbeta'])
+        elif ppn_mode=='GRtidal':
+            self.parameters.extend(['Omega','Rc','k2'])
         self.phase_uncerts = self.uncerts*self.best_parameters['f0']
         self.jmatrix, self.jnames = trend_matrix(
             self.mjds, self.tel_list, self.tels,
+            tel_base=tel_base,
             const=False, P=False, Pdot=False, jumps=True)
         self.parameters += self.jnames
         self.priors = frozenset(priors)
@@ -701,11 +712,15 @@ class Fitter(object):
             asini_o, pb_o, eps1_o, eps2_o, tasc_o,
             acosi_o, delta_lan,
             tzrmjd, f0, f1,
-            delta, dgamma, dbeta,
+            #delta, dgamma, dbeta,
+            Omega, Rc, k2,
             j_AO1350,
-            j_AO1440, j_AO327, j_GBT1500,
+            j_AO1440,
+            j_AO327,
+            j_GBT1500,
             j_GBT350, j_GBT820,
-            j_WSRT350):
+            j_WSRT350
+            ):
         ppn_mode = self.ppn_mode
         matrix_mode = self.matrix_mode
         r = self.residuals(locals())
