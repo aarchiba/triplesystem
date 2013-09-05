@@ -58,7 +58,7 @@ template = """PSR              J0337+17
 RAJ      03:37:43.82589000
 DECJ      17:15:14.8281000
 F0                  {f0!r} 1
-F1                  {f1!r}
+F1                  {f1!r} 1
 PEPOCH        56100.000000
 DM               21.313000
 SOLARN0              10.00
@@ -66,18 +66,18 @@ EPHEM             DE405
 CLK               UTC(NIST)   
 TZRMJD  56100.13622674904489
 TZRFRQ            1379.999
-TZRSITE                  j
+TZRSITE                  @
 NITS                     1
 BINARY             {model}     
 PLAN  1
 A1             {asini_i!r} 1
-E                  {e_i!r}
+E                  {e_i!r} 1
 T0                {t0_i!r} 1
 OM                {om_i!r} 1
 PB                {pb_i!r} 1
 A1_2           {asini_o!r}
 E_2                {e_o!r}
-T0_2              {t0_o!r}
+T0_2              {t0_o!r} 1
 PB_2              {pb_o!r}
 OM_2              {om_o!r}
 """

@@ -8,9 +8,22 @@ import scipy.linalg
 G_mks = 6.67398e-11 # m**3 kg**(-1) s**(-2)
 c = 299792458. # m/s
 M_sun = 1.9891e30 # kg
-G = G_mks * c**(-3) * M_sun * 86400**2
+G_old = G_mks * c**(-3) * M_sun * 86400**2
+G = 36768.59290949113 # Based on standard gravitational parameter
 
 def true_from_eccentric(e, eccentric_anomaly):
+    """Compute the true anomaly from the eccentric anomaly
+
+    Inputs:
+        e - the eccentricity
+        eccentric_anomaly - the eccentric anomaul
+
+    Outputs:
+        true_anomaly - the true anomaly
+        true_anomaly_de - derivative of true anomaly with respect to e
+        true_anomaly_prime - derivative of true anomaly with respect to
+            eccentric anomaly
+    """
     true_anomaly = 2*np.arctan2(np.sqrt(1+e)*np.sin(eccentric_anomaly/2),
                                 np.sqrt(1-e)*np.cos(eccentric_anomaly/2))
     true_anomaly_de = (np.sin(eccentric_anomaly)/
@@ -19,6 +32,16 @@ def true_from_eccentric(e, eccentric_anomaly):
     return true_anomaly, true_anomaly_de, true_anomaly_prime
 
 def eccentric_from_mean(e, mean_anomaly):
+    """Compute the eccentric anomaly from the mean anomaly
+
+    Inputs:
+        e - the eccentricity
+        mean_anomaly - the mean anomaly
+
+    Outputs:
+        eccentric_anomaly - the true anomaly
+        derivatives - pair of derivatives with respect to the two inputs
+    """
     eccentric_anomaly = newton(
             lambda E: E-e*np.sin(E)-mean_anomaly,
             mean_anomaly,
@@ -33,13 +56,13 @@ def kepler_2d(a, pb, eps1, eps2, t):
     """Position and velocity of a particle in a Kepler orbit
 
     The orbit has semimajor axis a, period pb, and eccentricity
-    paramerized by eps1=e*sin(om) and eps2=e*cos(om), and the 
+    paramerized by eps1=e*sin(om) and eps2=e*cos(om), and the
     particle is on the x axis at time zero, while the values
     are computed for time t.
 
     The function returns a pair (xv, p), where xv is of length
     four and consists of (x,y,v_x,v_y), and p is of shape (4,5)
-    and cell (i,j) contains the the partial derivative of the 
+    and cell (i,j) contains the the partial derivative of the
     ith element of xv with respect to the jth orbital parameter.
 
     The zero of time is when the particle is on the positive x
@@ -76,25 +99,25 @@ def kepler_2d(a, pb, eps1, eps2, t):
             /(e*np.cos(true_anomaly_0)+1)**2)
 
     mean_anomaly_0 = eccentric_anomaly_0 - e*np.sin(eccentric_anomaly_0)
-    d_mean_anomaly_0 = (d_eccentric_anomaly_0 
+    d_mean_anomaly_0 = (d_eccentric_anomaly_0
             -d_e*np.sin(eccentric_anomaly_0)
             -e*np.cos(eccentric_anomaly_0)*d_eccentric_anomaly_0)
 
     mean_anomaly = 2*np.pi*t/pb + mean_anomaly_0
-    d_mean_anomaly = (2*np.pi*np.array([0,-t/pb**2,0,0,pb**(-1)]) 
+    d_mean_anomaly = (2*np.pi*np.array([0,-t/pb**2,0,0,pb**(-1)])
             + d_mean_anomaly_0)
 
     mean_anomaly_dot = 2*np.pi/pb
     d_mean_anomaly_dot = 2*np.pi*np.array([0,-pb**(-2),0,0,0])
     #return [mean_anomaly, mean_anomaly_dot], [d_mean_anomaly, d_mean_anomaly_dot]
     #return mean_anomaly, d_mean_anomaly
-    
+
     eccentric_anomaly, (eccentric_anomaly_de, eccentric_anomaly_prime) = eccentric_from_mean(e, mean_anomaly)
     eccentric_anomaly_dot = eccentric_anomaly_prime*mean_anomaly_dot
 
     d_eccentric_anomaly = (eccentric_anomaly_de*d_e
             +eccentric_anomaly_prime*d_mean_anomaly)
-    d_eccentric_anomaly_prime = (np.cos(eccentric_anomaly)/(1-e*np.cos(eccentric_anomaly))**2*d_e 
+    d_eccentric_anomaly_prime = (np.cos(eccentric_anomaly)/(1-e*np.cos(eccentric_anomaly))**2*d_e
                 -e*np.sin(eccentric_anomaly)/(1-e*np.cos(eccentric_anomaly))**2*d_eccentric_anomaly)
     d_eccentric_anomaly_dot = (d_eccentric_anomaly_prime*mean_anomaly_dot
             +eccentric_anomaly_prime*d_mean_anomaly_dot)
@@ -193,8 +216,9 @@ def inverse_kepler_2d(xv,m):
     #mean_anomaly*pb/(2*np.pi)
 
 def btx_parameters(asini, pb, eps1, eps2, tasc):
+    """Attempt to convert parameters from ELL1 to BTX"""
     e = np.hypot(eps1,eps2)
-    om = np.arctan2(eps1,eps2) 
+    om = np.arctan2(eps1,eps2)
     true_anomaly = -om # True anomaly at the ascending node
     eccentric_anomaly = np.arctan2(np.sqrt(1-e**2)*np.sin(true_anomaly),
                                    e+np.cos(true_anomaly))
@@ -220,6 +244,10 @@ def mass_partials(a, pb):
 
 
 def kepler_3d(a,pb,eps1,eps2,i,lan,t):
+    """One-body Kepler problem in 3D
+
+    This function simply uses kepler_2d and rotates it into 3D.
+    """
     xv, jac = kepler_2d(a,pb,eps1,eps2,t)
     xyv = np.zeros(6)
     xyv[:2] = xv[:2]
@@ -259,6 +287,8 @@ def kepler_3d(a,pb,eps1,eps2,i,lan,t):
     return xyv4, jac4
 
 def inverse_kepler_3d(xyv, m):
+    """Inverse Kepler one-body calculation
+    """
     L = np.cross(xyv[:3],xyv[3:])
     i = np.arccos(L[2]/np.sqrt(np.dot(L,L)))
     lan = (-np.arctan2(L[0],-L[1])) % (2*np.pi)
@@ -287,14 +317,16 @@ def inverse_kepler_3d(xyv, m):
 def kepler_two_body(a,pb,eps1,eps2,i,lan,q,x_cm,v_cm,tasc):
     """Set up two bodies in a Keplerian orbit
 
-    Most orbital parameters describe the orbit of the 
+    Most orbital parameters describe the orbit of the
     primary; the secondary's parameters are inferred
     from the fact that its mass is q times that of the
     primary. x_cm and v_cm are the position and velocity
     of the center of mass of the system.
-    
+
     The system is observed at time zero, and tasc is the
     the time of the ascending node.
+
+    Includes derivatives.
     """
     e = np.eye(14)
     (d_a, d_pb, d_eps1, d_eps2, d_i, d_lan, d_q) = e[:7]
@@ -310,13 +342,13 @@ def kepler_two_body(a,pb,eps1,eps2,i,lan,q,x_cm,v_cm,tasc):
     m_tot, m_tot_prime = mass_partials(a_tot, pb)
     m = m_tot/(1+q)
     m_c = q*m
-    d_m_tot = (m_tot_prime[0]*d_a_tot 
+    d_m_tot = (m_tot_prime[0]*d_a_tot
               +m_tot_prime[1]*d_pb)
     d_m = d_m_tot/(1+q) - m_tot*d_q/(1+q)**2
     d_m_c = d_q*m + q*d_m
 
     xv_tot, jac_one = kepler_3d(a_tot,pb,eps1,eps2,i,lan,-tasc)
-    d_xv_tot = np.dot(jac_one, 
+    d_xv_tot = np.dot(jac_one,
             np.array([d_a_tot,
                       d_pb,
                       d_eps1,
@@ -420,8 +452,8 @@ def kepler_three_body(
     if m_temp<=0:
         raise ValueError("m_temp not positive: %s" % format_args(*args))
     q_o = np.exp(newton(
-        lambda lnq: 3*lnq-np.log1p(np.exp(lnq))*2 
-                - np.log(m_temp) + np.log(m_i), 
+        lambda lnq: 3*lnq-np.log1p(np.exp(lnq))*2
+                - np.log(m_temp) + np.log(m_i),
         0))
 
     d_m_i = (m_i_prime[0]*(d_a_i*(1+1./q_i)-a_i*d_q_i/q_i**2)
@@ -429,18 +461,18 @@ def kepler_three_body(
     d_m_temp = (m_temp_prime[0]*d_a_o+m_temp_prime[1]*d_pb_o)
     d_q_o = -((q_o+1)**3/(q_o**2*(q_o+3))
             *(-d_m_temp/m_i+m_temp*d_m_i/m_i**2))
-    
+
     if q_o<0:
         raise ValueError("Orbital parameters require outer mass to be negative: total mass is %g times inner mass" % (m_tot/m_i))
 
     total_state_o, jac_o = kepler_two_body(
         a_o,pb_o,eps1_o,eps2_o,i_o,lan_o,q_o,
-        x_cm, v_cm, 
+        x_cm, v_cm,
         tasc_o)
     m = np.vstack([d_a_o,d_pb_o,
                 d_eps1_o,d_eps2_o,
                 d_i_o,d_lan_o,d_q_o,
-                d_x_cm, d_v_cm, 
+                d_x_cm, d_v_cm,
                 d_tasc_o])
     d_total_state_o = np.dot(jac_o,m)
     # Note: this fails because of roundoff
@@ -469,7 +501,7 @@ three_body_parameters = inspect.getargspec(kepler_three_body)[0]
 
 def inverse_kepler_three_body(total_state):
     (a_i, pb_i, eps1_i, eps2_i,
-        i_i, lan_i, q_i, 
+        i_i, lan_i, q_i,
         x_cm_i, v_cm_i, tasc_i) = inverse_kepler_two_body(total_state[:14])
 
     m_p = total_state[6]
@@ -487,9 +519,9 @@ def inverse_kepler_three_body(total_state):
     ts_o[7:14] = total_state[14:21]
 
     (a_o, pb_o, eps1_o, eps2_o,
-        i_o, lan_o, q_o, 
+        i_o, lan_o, q_o,
         x_cm, v_cm, tasc_o) = inverse_kepler_two_body(ts_o)
-    
+
     return (
         a_i,pb_i,eps1_i,eps2_i,i_i,lan_i,q_i,tasc_i,
         a_o,pb_o,eps1_o,eps2_o,i_o,lan_o,tasc_o,
@@ -498,11 +530,11 @@ def inverse_kepler_three_body(total_state):
 
 def kepler_three_body_measurable(
         # Measurable fairly directly
-        asini_i, pb_i, eps1_i, eps2_i, tasc_i, 
+        asini_i, pb_i, eps1_i, eps2_i, tasc_i,
         # Not measurable apart from interaction
         acosi_i, q_i,
         # Measurable fairly directly
-        asini_o, pb_o, eps1_o, eps2_o, tasc_o, 
+        asini_o, pb_o, eps1_o, eps2_o, tasc_o,
         # Not measurable apart from interaction
         acosi_o, delta_lan,
         # Not measurable at all
@@ -510,15 +542,15 @@ def kepler_three_body_measurable(
         t):
 
     e = np.eye(22)
-    (d_asini_i, d_pb_i, d_eps1_i, d_eps2_i, d_tasc_i, 
+    (d_asini_i, d_pb_i, d_eps1_i, d_eps2_i, d_tasc_i,
         d_acosi_i, d_q_i,
-        d_asini_o, d_pb_o, d_eps1_o, d_eps2_o, d_tasc_o, 
+        d_asini_o, d_pb_o, d_eps1_o, d_eps2_o, d_tasc_o,
         d_acosi_o, d_delta_lan,
         d_lan_i) = e[:15]
     d_x_cm = e[15:18]
     d_v_cm = e[18:21]
     d_t = e[21]
-    
+
     a_i = np.hypot(asini_i, acosi_i)
     i_i = np.arctan2(asini_i, acosi_i)
     d_a_i = (d_asini_i*asini_i + d_acosi_i*acosi_i)/a_i
@@ -564,9 +596,9 @@ def inverse_kepler_three_body_measurable(state, t):
     tasc_i = tasc_i + t
     tasc_o = tasc_o + t
 
-    return (asini_i, pb_i, eps1_i, eps2_i, tasc_i, 
+    return (asini_i, pb_i, eps1_i, eps2_i, tasc_i,
         acosi_i, q_i,
-        asini_o, pb_o, eps1_o, eps2_o, tasc_o, 
+        asini_o, pb_o, eps1_o, eps2_o, tasc_o,
         acosi_o, delta_lan,
         lan_i, x_cm, v_cm)
 
@@ -591,7 +623,7 @@ def check_all_partials(f, args, delta=1e-6, atol=1e-4, rtol=1e-4):
 
     try:
         np.testing.assert_allclose(jac, njac, atol=atol, rtol=rtol)
-    except AssertionError: 
+    except AssertionError:
         #print jac
         #print njac
         d = np.abs(jac-njac)/(atol+rtol*np.abs(njac))
@@ -648,7 +680,7 @@ def accelerations(total_state):
             d_dx = d_x_j - d_x_i
             r2 = np.sum(dx**2)
             d_r2 = 2*np.sum(dx[:,None]*d_dx,axis=0)
-            
+
             c = G*dx*r2**(-3./2)
             d_c = G*(d_dx*r2**(-3./2)
                     -(3./2)*dx[:,None]*r2**(-5./2)*d_r2[None,:])
@@ -732,7 +764,7 @@ def rhs_variation_of_parameters(t,parameters):
     extra_rhs[3:6] = a_1_delta
     extra_rhs[10:13] = a_2_delta
     extra_rhs[17:20] = a_3_delta
-    
+
     rhs = scipy.linalg.solve(jac,extra_rhs)
 
     rhs[7] += -1
@@ -745,7 +777,7 @@ def rhs_variation_of_parameters_stabilized(t,parameters):
 
     m_1, m_2, m_3 = [np.float128(m) for m in [state[6], state[13], state[20]]]
     m_i = m_1+m_2
-    x_1, x_2, x_3 = [x.astype(np.float128) 
+    x_1, x_2, x_3 = [x.astype(np.float128)
             for x in [state[:3], state[7:10], state[14:17]]]
     x_i = (m_1*x_1+m_2*x_2)/m_i
 
@@ -776,7 +808,7 @@ def rhs_variation_of_parameters_stabilized(t,parameters):
     extra_rhs[3:6] = a_1_delta
     extra_rhs[10:13] = a_2_delta
     extra_rhs[17:20] = a_3_delta
-    
+
     rhs = scipy.linalg.solve(jac,extra_rhs)
 
     rhs[6] = 0

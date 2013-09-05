@@ -24,16 +24,58 @@ trust_nfs = True
 
 n_steps = 100000
 
-F = threebody.Fitter("0337+17-scott-2013-06-06",
-                     tzrmjd_middle='weighted',
+#fitter_params = dict(files="0337+17-scott-2013-06-06",
+#                     tzrmjd_middle='weighted',
+#                     priors=['dbeta','dgamma'],
+#                     fit_pos=True, parfile="0337_tempo2_nobinary.par",
+#                     ppn_mode='heavysimple')
+fitter_params = dict(files="0337+17-scott-2013-08-29",
+                     tzrmjd_middle='auto',
+                     fit_pos=True, fit_pm=True, fit_px=True,
+                     t2_astrometry=True,
+                     parfile="0337_tempo2_nobinary.par",
                      ppn_mode='GR')
+F = threebody.Fitter(**fitter_params)
+#F = threebody.Fitter("0337+17-scott-2013-06-06",
+#                     tzrmjd_middle='weighted',
+#                     ppn_mode='GR')
 #F = threebody.Fitter("0337+17-scott-2013-06-06",
 #                     tzrmjd_middle='weighted',
 #                     ppn_mode='heavysimple')
+#F = threebody.Fitter("0337+17-scott-2013-06-06",
+#                     tzrmjd_middle='weighted',
+#                     priors=['dbeta','dgamma'],
+#                     ppn_mode='heavysimple')
+# F = threebody.Fitter("0337+17-scott-2013-06-06",
+#                      tzrmjd_middle='weighted',
+#                      priors=['dbeta','dgamma'],
+#                      use_quad=True, tol=1e-20,
+#                      ppn_mode='heavysimple')
 #F = threebody.Fitter("0337+17-scott-2013-06-06",
 #                     tzrmjd_middle='weighted',
 #                     only_tels=['AO1440','AO1350','GBT1500'],
 #                     ppn_mode='heavysimple')
+# F = threebody.Fitter("0337+17-scott-2013-06-06",
+#                      tzrmjd_middle='weighted',
+#                      only_tels=['WSRT1400'],
+#                      priors=['dbeta','dgamma'],
+#                      ppn_mode='heavysimple')
+# F = threebody.Fitter("0337+17-scott-2013-06-06",
+#                      tzrmjd_middle='weighted',
+#                      only_tels=['GBT1500'],
+#                      priors=['dbeta','dgamma'],
+#                      ppn_mode='heavysimple')
+# F = threebody.Fitter("0337+17-scott-2013-06-06",
+#                      tzrmjd_middle='weighted',
+#                      only_tels=['AO1440','AO1350'],
+#                      priors=['dbeta','dgamma'],
+#                      ppn_mode='heavysimple')
+#F = threebody.Fitter("0337+17-scott-2013-06-06",
+#                     tzrmjd_middle='weighted',
+#                     priors=['dbeta','dgamma'],
+#                     fit_pos=True, parfile="0337_tempo2_nobinary.par",
+#                     ppn_mode='heavysimple')
+
 
 j = 0
 def lnprob(offset):
@@ -47,8 +89,7 @@ def lnprob(offset):
         raise ValueError("Parameter mismatch")
     for p,o in zip(F.parameters, offset):
         params[p] += o
-    r = F.residuals(params)/F.phase_uncerts/efac
-    return -0.5*np.sum(r**2)
+    return F.lnprob(params)
 def lnprior(offset):
     params = F.best_parameters.copy()
     for p,o in zip(F.parameters, offset):
@@ -65,6 +106,7 @@ try:
     dbdir = os.path.join('/home/aarchiba/projects/threebody/emcee-chains',jobid)
     if trust_nfs:
         local_dbdir = dbdir
+        os.mkdir(dbdir)
     else:
         local_dbdir = tempfile.mkdtemp()
 
@@ -103,6 +145,8 @@ try:
         the_thread.start()
     if debug:
         print "starting sampling loop"
+    with open(local_dbdir+"/fitter_params.pickle","wb") as f:
+        pickle.dump(fitter_params,f)
     np.save(local_dbdir+"/parameters.npy", F.parameters)
     np.save(local_dbdir+"/best_parameters.npy",
             np.array([F.best_parameters[p] for p in F.parameters]))

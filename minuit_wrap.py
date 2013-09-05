@@ -83,6 +83,12 @@ class Fitter(object):
     def tol(self, v):
         self._minuit.tol = v
     @property
+    def maxcalls(self):
+        return self._minuit.maxcalls
+    @maxcalls.setter
+    def maxcalls(self, v):
+        self._minuit.maxcalls = v
+    @property
     def up(self):
         return self._minuit.up
     @up.setter

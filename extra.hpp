@@ -145,7 +145,8 @@ void ppn_direct(const quad xv[21],
 }
 
 class MisshapenState { };
-#define G ((num)36779.59091405234)
+#define G_old ((num)36779.59091405234)
+#define G ((num)36768.59290949113)
 #define c_ ((num)86400)
 #define c2 ((num)7464960000)
 template<class num>
