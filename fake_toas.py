@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+import os
+import cPickle as pickle
 
 import numpy as np
 import scipy.linalg
@@ -7,25 +9,31 @@ import kepler
 import quad_integrate
 import threebody
 
-F = threebody.Fitter()
+fp = "fake_toas_fitter.pickle"
+if os.path.exists(fp):
+    d = pickle.load(open(fp,"rb"))
+    F = threebody.Fitter(**d)
+else:
+    F = threebody.Fitter()
+
 rms = 3e-6
 days = 1000
 n_per_day = 100
 times = np.linspace(1,days+1,n_per_day*days+1)
 
-o = threebody.compute_orbit_bbat(
-    [F.best_parameters[p] for p in F.parameters[:14]],times)
+o = F.compute_orbit(F.best_parameters)
+F_linear = F.compute_linear_parts(F.best_parameters)
 
 def freq(t):
-    t0 = F.best_parameters['tzrmjd']+(F.tzrmjd_base-F.base_mjd)
+    t0 = F_linear['tzrmjd']+(F_linear['tzrmjd_base']-F.base_mjd)
     t_s = (t-t0)*86400
-    return (F.best_parameters['f0']
-            +F.best_parameters['f1']*t_s)
+    return (F_linear['f0']
+            +F_linear['f1']*t_s)
 def phase(t):
-    t0 = F.best_parameters['tzrmjd']+(F.tzrmjd_base-F.base_mjd)
+    t0 = F_linear['tzrmjd']+(F_linear['tzrmjd_base']-F.base_mjd)
     t_s = (t-t0)*86400
-    return (F.best_parameters['f0']*t_s
-            +F.best_parameters['f1']*t_s**2/2.)
+    return (F_linear['f0']*t_s
+            +F_linear['f1']*t_s**2/2.)
 
 with open("fake.tim","wt") as tim:
     with open("fake-t2.tim","wt") as tim2:

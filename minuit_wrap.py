@@ -1,5 +1,6 @@
 
 import inspect
+import cPickle as pickle
 
 import numpy as np
 
@@ -20,6 +21,9 @@ class Fitter(object):
             if self.best_values is None or r<self.best_values_fval:
                 self.best_values = dict(self._denormalize(fargs,args))
                 self.best_values_fval = r
+                if self.best_filename is not None:
+                    with open(self.best_filename,"wb") as f:
+                        pickle.dump(self.best_values, f)
             return r
         s = ",".join(fargs)
         exec _fdef % (s,s) in locals()
@@ -36,6 +40,7 @@ class Fitter(object):
             self.errors[k] = np.float128(1)
         self.best_values = None
         self.best_values_fval = None
+        self.best_filename = None
 
     def _normalize(self, ks, vs):
         return [(k,(v-self.offset[k])/self.scale[k])
@@ -106,7 +111,7 @@ class Fitter(object):
         r = self._minuit.migrad()
         self._get_minuit()
         return r
-    
+
     def simplex(self):
         self._set_minuit()
         r = self._minuit.simplex()

@@ -33,7 +33,7 @@ def main(output_dir,arrayid,fitter_params,bootstrap_params):
     param_file = os.path.join(output_dir,"parameters.pickle")
     fitter_file = os.path.join(output_dir,"fitter.pickle")
     bootstrap_file = os.path.join(output_dir,"bootstrap.pickle")
-    
+
     if os.path.exists(fitter_file):
         p = pickle.load(open(fitter_file,"rb"))
         if p!=fiter_params:
@@ -89,10 +89,16 @@ if __name__=='__main__':
     dbdir = os.path.join('/home/aarchiba/projects/threebody/bootstrap-runs',jobid)
     os.mkdir(dbdir)
     arrayid = int(os.environ.get('PBS_ARRAYID'))
-    fitter_params = dict(files="0337+17-scott-2013-06-06",
-                            tzrmjd_middle='weighted',
-                            priors=['dbeta','dgamma'],
-                            ppn_mode='heavysimple')
+    fitter_params = dict(files="0337+17-scott-2013-08-29",
+                         tzrmjd_middle='auto',
+                         parfile="0337_tempo2_pm.par",
+                         fit_pos=True,
+                         fit_pm=False,
+                         fit_px=True,
+                         t2_astrometry=True,
+                         kopeikin=True,
+                         priors=('dbeta','dgamma'),
+                         ppn_mode='heavysimple')
     bootstrap_params = dict(minimizer="minuit",
                             strategy=1)
     #bootstrap_params = dict(minimizer="simplex")

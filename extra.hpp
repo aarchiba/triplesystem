@@ -242,6 +242,9 @@ class cKeplerRHS {
         const num Omega, Rc, k2;
 	const int matrix_mode;
         const num c_scale;
+        const num pm_x;
+        const num pm_y;
+        const bool time_reciprocal;
         cKeplerRHS(bool special, bool general, long long&evals, num delta,
 		   bool ppn_motion, num gamma, num beta,
 		   num Gamma01, num Gamma02, num Gamma12,
@@ -250,7 +253,8 @@ class cKeplerRHS {
 		   num Gamma100, num Gamma102, num Gamma122,
 		   num Gamma200, num Gamma201, num Gamma211,
 		   const num Omega, const num Rc, const num k2,
-		   int matrix_mode, num c_scale) : 
+		   int matrix_mode, num c_scale,
+		   num pm_x, num pm_y, bool time_reciprocal) : 
 	  evals(evals), special(special), general(general), delta(delta),
           ppn_motion(ppn_motion), gamma(gamma), beta(beta),
 	  Gamma01(Gamma01), Gamma02(Gamma02), Gamma12(Gamma12),
@@ -259,7 +263,8 @@ class cKeplerRHS {
 	  Gamma100(Gamma100), Gamma102(Gamma102), Gamma122(Gamma122), 
 	  Gamma200(Gamma200), Gamma201(Gamma201), Gamma211(Gamma211),
 	  Omega(Omega), Rc(Rc), k2(k2),
-	  matrix_mode(matrix_mode), c_scale(c_scale) { };
+	  matrix_mode(matrix_mode), c_scale(c_scale),
+          pm_x(pm_x), pm_y(pm_y), time_reciprocal(time_reciprocal) { };
         
         void kepler(const num x[], num dxdt[], const num t) {
             unsigned int i,j,k;
@@ -321,20 +326,37 @@ class cKeplerRHS {
             unsigned int j,k;
 
             slowing = 0;
-            if (this->special) {
+	    if (this->time_reciprocal) {
+	      if (this->special) {
                 v2 = sqr(x[3])+sqr(x[4])+sqr(x[5]);
                 slowing = expm1(-0.5*log1p(-v2/c2));
-            }
-            if (this->general) {
+	      }
+	      if (this->general) {
                 for (j=1;j<3;j++) {
-                    r = 0;
-                    for (k=0;k<3;k++) 
-                        r += sqr(x[7*j+k]-x[k]);
-                    r = sqrt(r);
-                    temp = expm1(-0.5*log1p(-2*G*x[7*j+6]/(r*c2)));
-                    slowing = slowing + temp + slowing*temp;
+		  r = 0;
+		  for (k=0;k<3;k++) 
+		    r += sqr(x[7*j+k]-x[k]);
+		  r = sqrt(r);
+		  temp = expm1(-0.5*log1p(-2*G*x[7*j+6]/(r*c2)));
+		  slowing = slowing + temp + slowing*temp;
                 }
-            }
+	      }
+	    } else {
+	      if (this->special) {
+                v2 = sqr(x[3])+sqr(x[4])+sqr(x[5]);
+                slowing = expm1(0.5*log1p(-v2/c2));
+	      }
+	      if (this->general) {
+                for (j=1;j<3;j++) {
+		  r = 0;
+		  for (k=0;k<3;k++) 
+		    r += sqr(x[7*j+k]-x[k]);
+		  r = sqrt(r);
+		  temp = expm1(0.5*log1p(-2*G*x[7*j+6]/(r*c2)));
+		  slowing = slowing + temp + slowing*temp;
+                }
+	      }
+	    }
             dxdt[21] = slowing;
         }
         void operator() ( const vector<num> &x,

@@ -40,6 +40,9 @@ cdef extern from "extra.hpp":
     cdef cppclass cKeplerRHS[num]:
         num gamma
         num beta
+        num pm_x
+        num pm_y
+        int time_reciprocal
         cKeplerRHS(int special, int general, long long&evals, num delta,
                    int ppn_motion, num gamma, num beta,
                    num Gamma01, num Gamma02, num Gamma12,
@@ -48,7 +51,8 @@ cdef extern from "extra.hpp":
                    num Gamma100, num Gamma102, num Gamma122,
                    num Gamma200, num Gamma201, num Gamma211,
                    num Omega, num Rc, num k2,
-                   int matrix_mode, num c_scale) except +
+                   int matrix_mode, num c_scale,
+                   num pm_x, num pm_y, int time_reciprocal) except +
         void evaluate(vector[num] *x, vector[num] *dxdt, num t) except +
         long long n_evaluations()
     cdef longdouble shapiro_delay(vectl&x, longdouble gamma)
@@ -225,25 +229,25 @@ cdef class ODEDelay:
         del self._x_q
         del self._stepper_q
 
-    cdef longdouble delay(self, vectl&x):
+    cdef longdouble delay(self, vectl&x, longdouble t_d):
         cdef longdouble d
         d = 0
         if self.roemer:
             d += x.at(2)/86400.
+            d += t_d*self._krhs.pm_x*x.at(0)/86400.
+            d += t_d*self._krhs.pm_y*x.at(1)/86400.
         if self.shapiro:
             d += shapiro_delay(x,self._krhs.gamma)
-        if False and x.size()>21: # This should include only propagation delays
-            d += x.at(21)
         return d
-    cdef quad delay_q(self, vectq&x):
+    cdef quad delay_q(self, vectq&x, quad t_d):
         cdef quad d
         d = 0
         if self.roemer:
             d += x.at(2)/86400.
+            d += t_d*self._krhs_q.pm_x*x.at(0)/86400.
+            d += t_d*self._krhs_q.pm_y*x.at(1)/86400.
         if self.shapiro:
             d += shapiro_delay(x,self._krhs_q.gamma)
-        if False and x.size()>21: # This should include only propagation delays
-            d += x.at(21)
         return d
 
     cpdef integrate_to(self, t_bb):
@@ -253,21 +257,27 @@ cdef class ODEDelay:
         cdef longdouble before_t_d, after_t_d, temp_t_d
         cdef longdouble before_t_bb, after_t_bb, temp_t_bb
         cdef longdouble w, oldw
-        cdef longdouble thresh = self._rtol
+        cdef longdouble thresh = 1e1*self._rtol
 
         cdef quad _t_bb_q
         cdef quad d_q
         cdef quad before_t_d_q, after_t_d_q, temp_t_d_q
         cdef quad before_t_bb_q, after_t_bb_q, temp_t_bb_q
         cdef quad w_q, oldw_q
-        cdef quad thresh_q = self._rtol_q
+        cdef quad thresh_q = 1e1*self._rtol_q
+
+        cdef int nit
+        cdef int maxit
+
+        nit = 0
+        maxit = 100
 
         if self.using_quad:
             _t_bb_q = py_to_quad(t_bb)
             while True:
                 current_state(self._stepper_q[0], self._x_q[0])
                 after_t_d_q = self._stepper_q.current_time()
-                d_q = self.delay_q(self._x_q[0])
+                d_q = self.delay_q(self._x_q[0], after_t_d_q)
                 if after_t_d_q+d_q>_t_bb_q:
                     break
                 do_step_dense(self._krhs_q[0],self._stepper_q[0])
@@ -277,7 +287,7 @@ cdef class ODEDelay:
 
             before_t_d_q = self._stepper_q.previous_time()
             previous_state(self._stepper_q[0], self._x_q[0])
-            before_t_bb_q = before_t_d_q + self.delay_q(self._x_q[0])
+            before_t_bb_q = before_t_d_q + self.delay_q(self._x_q[0], before_t_d_q)
 
             if before_t_bb_q>=_t_bb_q:
                 raise ValueError("ODE integrator not started early enough for first data point")
@@ -290,13 +300,17 @@ cdef class ODEDelay:
                 assert w_q>0
                 if w_q/oldw_q>0.75: # regula falsi is being slow
                     temp_t_d_q = (before_t_d_q+after_t_d_q)/2
+                    if temp_t_d_q==before_t_d_q or temp_t_d_q==after_t_d_q:
+                        # This is a minuscule interval and we're never
+                        # going to shrink it
+                        break
                 else: # use regula falsi - treat the function as linear
                     temp_t_d_q = (after_t_d_q*(_t_bb_q-before_t_bb_q)+
                                before_t_d_q*(after_t_bb_q-_t_bb_q))/(after_t_bb_q-before_t_bb_q)
                 oldw_q = w_q
 
                 self._stepper_q.calc_state(temp_t_d_q, self._x_q[0])
-                temp_t_bb_q = temp_t_d_q+self.delay_q(self._x_q[0])
+                temp_t_bb_q = temp_t_d_q+self.delay_q(self._x_q[0], temp_t_d_q)
                 if -thresh_q<temp_t_bb_q-_t_bb_q<thresh_q:
                     break
 
@@ -306,7 +320,7 @@ cdef class ODEDelay:
                 else:
                     before_t_d_q = temp_t_d_q
                     before_t_bb_q = temp_t_bb_q
-                if after_t_d_q-before_t_d_q<thresh_q/100:
+                if after_t_d_q-before_t_d_q<thresh_q/100 or nit>maxit:
                     raise ValueError("""Convergence failure:
                         before_t_d = %s
                         after_t_d = %s
@@ -319,27 +333,37 @@ cdef class ODEDelay:
                                quad_to_py(_t_bb_q),
                                quad_to_py(after_t_bb_q))
                                )
+                nit += 1
             self._t_d_q = temp_t_d_q
             self._t_bb_q = temp_t_bb_q
             self._t_psr_q = temp_t_d_q
             if self._x_q[0].size()>21: # if any time dilation
-                self._t_psr_q -= self._x_q[0].at(21) # FIXME: is this sign right?
+                if self._krhs_q.time_reciprocal:
+                    self._t_psr_q -= self._x_q[0].at(21) # FIXME: is this sign right?
+                else:
+                    self._t_psr_q -= self._x_q[0].at(21) # FIXME: is this sign right?
         else:
             _t_bb = py_to_longdouble(t_bb)
+            before_t_d = self._stepper.previous_time()
+            current_state(self._stepper[0], self._x[0])
+            after_t_d = self._stepper.current_time()
             while True:
-                current_state(self._stepper[0], self._x[0])
-                after_t_d = self._stepper.current_time()
-                d = self.delay(self._x[0])
+                d = self.delay(self._x[0], after_t_d)
                 if after_t_d+d>_t_bb:
                     break
                 do_step_dense(self._krhs[0],self._stepper[0])
+                before_t_d = after_t_d
+                current_state(self._stepper[0], self._x[0])
+                after_t_d = self._stepper.current_time()
+                if before_t_d==after_t_d:
+                    raise ValueError("Step taken without forward progress at t_d=%g" % longdouble_to_py(before_t_d))
             # compute state by interpolation
 
             after_t_bb = after_t_d+d
 
             before_t_d = self._stepper.previous_time()
             previous_state(self._stepper[0], self._x[0])
-            before_t_bb = before_t_d + self.delay(self._x[0])
+            before_t_bb = before_t_d + self.delay(self._x[0], before_t_d)
 
             if before_t_bb>=_t_bb:
                 raise ValueError("ODE integrator not started early enough for first data point")
@@ -352,13 +376,17 @@ cdef class ODEDelay:
                 assert w>0
                 if w/oldw>0.75: # regula falsi is being slow
                     temp_t_d = (before_t_d+after_t_d)/2
+                    if temp_t_d==before_t_d or temp_t_d==after_t_d:
+                        # This is a minuscule interval and we're never
+                        # going to shrink it
+                        break
                 else: # use regula falsi - treat the function as linear
                     temp_t_d = (after_t_d*(_t_bb-before_t_bb)+
                                before_t_d*(after_t_bb-_t_bb))/(after_t_bb-before_t_bb)
                 oldw = w
 
                 self._stepper.calc_state(temp_t_d, self._x[0])
-                temp_t_bb = temp_t_d+self.delay(self._x[0])
+                temp_t_bb = temp_t_d+self.delay(self._x[0], temp_t_d)
                 if -thresh<temp_t_bb-_t_bb<thresh:
                     break
 
@@ -368,13 +396,28 @@ cdef class ODEDelay:
                 else:
                     before_t_d = temp_t_d
                     before_t_bb = temp_t_bb
-                if after_t_d-before_t_d<thresh/100:
-                    raise ValueError("Convergence failure")
+                if after_t_d-before_t_d<thresh/100 or nit>maxit:
+                    raise ValueError("""Convergence failure:
+                        before_t_d = %s
+                        after_t_d = %s
+                        before_t_bb = %s
+                        t_bb = %s
+                        after_t_bb = %s
+                        """ % (longdouble_to_py(before_t_d),
+                               longdouble_to_py(after_t_d),
+                               longdouble_to_py(before_t_bb),
+                               longdouble_to_py(_t_bb),
+                               longdouble_to_py(after_t_bb))
+                               )
+                nit += 1
             self._t_d = temp_t_d
             self._t_bb = temp_t_bb
             self._t_psr = temp_t_d
             if self._x[0].size()>21: # if any time dilation
-                self._t_psr -= self._x[0].at(21) # FIXME: is this sign right?
+                if self._krhs.time_reciprocal:
+                    self._t_psr -= self._x[0].at(21) # FIXME: is this sign right?
+                else:
+                    self._t_psr += self._x[0].at(21) # FIXME: is this sign right?
 
     def __dealloc__(self):
         del self._x
@@ -462,7 +505,8 @@ cdef class KeplerRHS(RHS):
                  Gamma100=1, Gamma102=1, Gamma122=1,
                  Gamma200=1, Gamma201=1, Gamma211=1,
                  Omega=0, Rc=0, k2=0,
-                 matrix_mode=0, c_scale=1):
+                 matrix_mode=0, c_scale=1,
+                 pm_x=0, pm_y=0, time_reciprocal=True):
         self._krhs=new cKeplerRHS[quad](special, general, self._evals,
             py_to_quad(delta), ppn_motion,
             py_to_quad(gamma), py_to_quad(beta),
@@ -472,7 +516,9 @@ cdef class KeplerRHS(RHS):
             py_to_quad(Gamma100), py_to_quad(Gamma102), py_to_quad(Gamma122),
             py_to_quad(Gamma200), py_to_quad(Gamma201), py_to_quad(Gamma211),
             py_to_quad(Omega), py_to_quad(Rc), py_to_quad(k2),
-            matrix_mode, py_to_quad(c_scale))
+            matrix_mode, py_to_quad(c_scale),
+            py_to_quad(pm_x), py_to_quad(pm_y),
+            time_reciprocal)
         self._krhs_l=new cKeplerRHS[longdouble](special, general, self._evals,
             py_to_longdouble(delta), ppn_motion,
             py_to_longdouble(gamma), py_to_longdouble(beta),
@@ -482,7 +528,9 @@ cdef class KeplerRHS(RHS):
             py_to_longdouble(Gamma100), py_to_longdouble(Gamma102), py_to_longdouble(Gamma122),
             py_to_longdouble(Gamma200), py_to_longdouble(Gamma201), py_to_longdouble(Gamma211),
             py_to_longdouble(Omega), py_to_longdouble(Rc), py_to_longdouble(k2),
-            matrix_mode, py_to_longdouble(c_scale))
+            matrix_mode, py_to_longdouble(c_scale),
+            py_to_longdouble(pm_x), py_to_longdouble(pm_y),
+            time_reciprocal)
     cdef int _evaluate(self, vectq*x, vectq*dxdt, quad t) except -1:
         self._krhs.evaluate(x, dxdt, t)
     def __dealloc__(self):
