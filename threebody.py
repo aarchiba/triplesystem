@@ -176,9 +176,9 @@ def load_toas(timfile = '0337+17.tim',
             continue
         derivs[n] = derivs[n][ix]
     if pulses is None:
-        return t2_bats[ix], None, tel_list, tels[ix], errs[ix], derivs
+        return t2_bats[ix], None, tel_list, tels[ix], errs[ix], derivs, ix
     else:
-        return t2_bats[ix], pulses[ix], tel_list, tels[ix], errs[ix], derivs
+        return t2_bats[ix], pulses[ix], tel_list, tels[ix], errs[ix], derivs, ix
 
 def trend_matrix(mjds, tel_list, tels,
     const=True, P=True, Pdot=True, jumps=True,
@@ -629,7 +629,8 @@ class Fitter(object):
                 outname = files+"_"+self.parfile+".out"
             (self.mjds, self.pulses,
              self.tel_list, self.tels,
-             self.uncerts, self.derivs) = load_toas(
+             self.uncerts, self.derivs,
+             self.ix) = load_toas(
                  timfile=files+".tim",
                  pulses=files+".pulses",
                  parfile=self.parfile,
@@ -638,7 +639,8 @@ class Fitter(object):
         else:
             (self.mjds, self.pulses,
              self.tel_list, self.tels,
-             self.uncerts, self.derivs) = load_toas(base_mjd=self.base_mjd)
+             self.uncerts, self.derivs,
+             self.ix) = load_toas(base_mjd=self.base_mjd)
 
         self.tel_base = 'WSRT1400'
         if self.tel_base not in self.tel_list:
