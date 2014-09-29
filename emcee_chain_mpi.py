@@ -40,7 +40,8 @@ trust_nfs = True
 n_steps = 100000
 
 logger.debug("creating Fitter")
-mode = 'sep-2014-01'
+#mode = 'sep-2014-01'
+mode = 'file:emcee_params.pickle'
 #only_tels = ('AO1350','AO1440')
 #only_tels = ('GBT1500',)
 #only_tels = ('WSRT1400',)
@@ -108,6 +109,9 @@ elif mode=='sep-2014-01':
                          kopeikin=False,
                          priors=('dbeta','dgamma'),
                          ppn_mode='heavysimple')
+elif mode.startswith("file"):
+    fn = mode.split(":")[1]
+    fitter_params = pickle.load(open(fn,"rb"))
 else:
     raise ValueError("Unknown mode")
 

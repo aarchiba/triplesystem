@@ -30,12 +30,14 @@ def mjd_fromstring(s, base_mjd=0):
     f = np.float128("0."+f)
     return i+f
 
+#              tempo2_program = '/home/aarchiba/software/tempo2/tempo2/tempo2',
+#              tempo2_dir = '/home/aarchiba/software/tempo2/t2dir',
 astro_names = ["d_RAJ","d_DECJ","d_PX","d_PMRA","d_PMDEC"]
 def load_toas(timfile = '0337+17.tim',
               pulses = '0337+17.pulses',
               parfile = '0337_bogus.par',
-              tempo2_program = '/home/aarchiba/software/tempo2/tempo2/tempo2',
-              tempo2_dir = '/home/aarchiba/software/tempo2/t2dir',
+              tempo2_program = 'tempo2',
+              tempo2_dir = os.environ['TEMPO2'],
               t2outfile = '0337+17.out',
               base_mjd = None):
     """Load and barycenter pulse-numbered TOAs
@@ -51,6 +53,13 @@ def load_toas(timfile = '0337+17.tim',
         base_mjd = 0
 
     try:
+        pulses = np.loadtxt(pulses,dtype=np.float128)
+    except IOError as e:
+        if e.errno != 2:
+            raise
+        pulses = None
+    timfile_len = len(open(timfile,"rt").readlines())
+    try:
         if t2outfile is None:
             t2outfile = ""
         o = open(t2outfile).read()
@@ -60,11 +69,14 @@ def load_toas(timfile = '0337+17.tim',
         e['TEMPO2'] = tempo2_dir
         outline = "OUTPUT {bat} {freq} {err} {%s}\n"%("} {".join(astro_names))
         o = subprocess.check_output([tempo2_program,
+            "-nobs", str(timfile_len+100),
+            "-npsr", "1",
             "-output", "general2", "-s", outline,
             "-f", parfile, timfile], env=e)
         if t2outfile:
             with open(t2outfile,"wt") as f:
                 f.write(o)
+                
     t2_bats = []
     freqs = []
     errs = []
@@ -84,7 +96,17 @@ def load_toas(timfile = '0337+17.tim',
     errs = np.array(errs)*1e-6 # convert to s
     for n in astro_names:
         derivs[n] = np.array(derivs[n])
-    pulses = np.loadtxt(pulses,dtype=np.float128)
+    if pulses is not None and len(t2_bats)!=len(pulses):
+        raise ValueError("Confusing tim file %s: list of %d BATs doesn't match list of %d pulse numbers" % (timfile,len(t2_bats),len(pulses)))
+    telcodes = []
+    for l in open(timfile).readlines():
+        if l.split():
+            telcode = l.split()[0]
+            if telcode in ["i", "1", "3", "f", "@"]:
+                telcodes.append(telcode)
+    if len(telcodes)!=len(t2_bats):
+        raise ValueError("Confusing tim file %s: list of %d telescope codes doesn't match list of %d BATs" % (timfile,len(telcodes),len(t2_bats)))
+
     tels = []
     tel_list = []
     def pick_tel(f):
@@ -96,7 +118,7 @@ def load_toas(timfile = '0337+17.tim',
             tel = 'WSRT350'
         elif 1357.8<f<1358.5 or 1449.8<f<1450.5:
             tel = 'AO1350'
-        elif 1470<f<1580 or 1700<f<1800:
+        elif 1450.5<f<1600 or 1700<f<1800:
             tel = 'GBT1500'
         elif 1420<f<1440.1:
             tel = 'AO1440'
@@ -110,13 +132,41 @@ def load_toas(timfile = '0337+17.tim',
             print "WARNING: unable to determine telescope for frequency '%s'" % f
             tel = 'mystery'
         return tel
-    for f in freqs:
-        tel = pick_tel(f)
+    def pick_tel_code(f,c):
+        tel = None
+        if c=='i':
+            if 1200<f<1500:
+                tel = 'WSRT1400'
+        elif c=='1':
+            if 1000<f<1900:
+                tel = 'GBT1500'
+            elif 300<f<400:
+                tel = 'GBT350'
+            elif 700<f<900:
+                tel = 'GBT820'
+        elif c=='3':
+            if 1357.8<f<1358.5 or 1449.8<f<1450.5:
+                tel = 'AO1350'
+            elif 1420<f<1440.1:
+                tel = 'AO1440'
+        elif c=='f':
+            if 1000.0<f<2500:
+                tel = 'NCY1400'
+        elif c=='@':
+            tel = 'infinite'
+
+        if tel is None:
+            print "WARNING: unable to determine telescope for frequency '%s' and code '%s'" % (f,c)
+            tel = 'mystery'
+        return tel
+            
+    for f,c in zip(freqs,telcodes):
+        tel = pick_tel_code(f,c)
         if tel not in tel_list:
             tel_list.append(tel)
     tel_list.sort()
-    for f in freqs:
-        tel = pick_tel(f)
+    for f,c in zip(freqs,telcodes):
+        tel = pick_tel_code(f,c)
         tels.append(tel_list.index(tel))
     tels = np.array(tels)
 
@@ -125,7 +175,10 @@ def load_toas(timfile = '0337+17.tim',
         if len(derivs[n])==0:
             continue
         derivs[n] = derivs[n][ix]
-    return t2_bats[ix], pulses[ix], tel_list, tels[ix], errs[ix], derivs
+    if pulses is None:
+        return t2_bats[ix], None, tel_list, tels[ix], errs[ix], derivs
+    else:
+        return t2_bats[ix], pulses[ix], tel_list, tels[ix], errs[ix], derivs
 
 def trend_matrix(mjds, tel_list, tels,
     const=True, P=True, Pdot=True, jumps=True,
@@ -273,7 +326,7 @@ def compute_orbit(parameter_dict, times, keep_states=True):
                 for p in kepler.three_body_parameters_measurable[:14]])
     bbats = np.asarray(times)
 
-    o = dict(parameter_dict=parameter_dict, times=times)
+    o = dict(parameter_dict=parameter_dict, times=times, n_evaluations=0)
     tol = parameter_dict.get('tol', 1e-16)
     use_quad = parameter_dict.get('use_quad',False)
     ppn_mode = parameter_dict.get('ppn_mode',None)
@@ -605,7 +658,8 @@ class Fitter(object):
             self.tel_list = only_tels
             self.tels = new_tels
         self.mjds = self.mjds[c]
-        self.pulses = self.pulses[c]
+        if self.pulses is not None:
+            self.pulses = self.pulses[c]
         self.tels = self.tels[c]
         self.uncerts = self.uncerts[c]
         for k in self.derivs:
@@ -618,13 +672,15 @@ class Fitter(object):
                    /np.sum(self.uncerts))
             i = np.searchsorted(self.mjds,mid)
             self.tzrmjd_base = self.mjds[i]
-            self.pulses -= self.pulses[i]
+            if self.pulses is not None:
+                self.pulses -= self.pulses[i]
         elif tzrmjd_middle=="auto":
             self.tzrmjd_base = None
         elif tzrmjd_middle:
             i = len(self.mjds)//2
             self.tzrmjd_base = self.mjds[i]
-            self.pulses -= self.pulses[i]
+            if self.pulses is not None:
+                self.pulses -= self.pulses[i]
         else:
             self.tzrmjd_base = 56100
 
@@ -1115,7 +1171,7 @@ class Fitter(object):
         else:
             debug("compute_orbit cache hit")
         return self.last_orbit
-    def residuals(self, p, times=None):
+    def residuals(self, p, times=None, marginalize=False):
         """Compute the phase residuals corresponing to a parameter dict
 
         Given a set of parameters, compute the orbit, then evaluate
@@ -1132,17 +1188,30 @@ class Fitter(object):
             tzrmjd - zero of pulse phase
         If some of the last three are missing, their best-fit values
         will automatically be computed and their effect subtracted.
+
+        If the marginalize parameter is True, this function will also
+        return half the logarithm of the determinant of the matrix of
+        normal equations. This quantity should be subtracted from the
+        logp value to correctly perform analytical marginalization over
+        these linear parameters.
         """
         debug("Started residuals for %s" % repr(p))
         o = self.compute_orbit(p)
         t_psr_s = o['t_psr']*86400.
         if 'tzrmjd' in p and 'f1' in p and 'f0' in p:
             debug("Using tzrmjd f0 and f1 from parameters")
-            tzrmjd_s = (p['tzrmjd']+(self.tzrmjd_base-self.base_mjd))*86400
+            if 'tzrmjd_base' in p:
+                tzrmjd_base = p['tzrmjd_base']
+            else:
+                tzrmjd_base = self.tzrmjd_base
+            tzrmjd_s = (p['tzrmjd']+(tzrmjd_base-self.base_mjd))*86400
             # assume PEPOCH is self.base_mjd
             phase = p['f0']*t_psr_s+p['f1']*t_psr_s**2/2.
             phase -= p['f0']*tzrmjd_s+p['f1']*tzrmjd_s**2/2.
-            return phase-self.pulses
+            if marginalize:
+                return phase-self.pulses, 0
+            else:
+                return phase-self.pulses
         else:
             debug("Setting up linear least-squares fitting")
             b = self.pulses.copy()
@@ -1160,7 +1229,12 @@ class Fitter(object):
                 b -= np.dot(A,x)
                 debug("Linear least-squares residual RMS %g" % np.sqrt(np.mean(b**2)))
             debug("Done linear least-squares")
-            return -b
+            if marginalize:
+                As = A/self.phase_uncerts[:,None]
+                s, m = np.linalg.slogdet(np.dot(As.T,As).astype(float))
+                return -b, 0.5*m
+            else:
+                return -b
     def compute_linear_parts(self, p=None, t_psr=None):
         debug("Computing linear parts")
         if p is None:
@@ -1201,8 +1275,9 @@ class Fitter(object):
 
     def lnprob(self, p):
         """Return the log-likelihood of the fit"""
-        r = self.residuals(p)/self.phase_uncerts/self.efac
-        return -0.5*np.sum(r**2)
+        r, m = self.residuals(p,marginalize=True)
+        r = r/self.phase_uncerts/self.efac
+        return -0.5*np.sum(r**2)-m
 
     def lnprior(self, p):
         """Return the log-likelihood of the prior
