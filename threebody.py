@@ -1275,9 +1275,13 @@ class Fitter(object):
         return dict(f0=f0, f1=f1, tzrmjd_base=self.base_mjd,
                     tzrmjd=tzrmjd_s/86400)
 
-    def lnprob(self, p):
+    def lnprob(self, p, marginalize=True):
         """Return the log-likelihood of the fit"""
-        r, m = self.residuals(p,marginalize=True)
+        if marginalize:
+            r, m = self.residuals(p,marginalize=marginalize)
+        else:
+            r = self.residuals(p,marginalize=marginalize)
+            m = 0
         r = r/self.phase_uncerts/self.efac
         return -0.5*np.sum(r**2)-m
 
@@ -1307,13 +1311,13 @@ class Fitter(object):
         return -l/2.
 
     def chi2(self, p):
-        return -2*self.efac**2*(self.lnprob(p) + self.lnprior(p))
+        return -2*self.efac**2*(self.lnprob(p, marginalize=False) + self.lnprior(p))
 
     def make_mfun(self):
         args = ", ".join(self.parameters)
         argdict = "dict(" + ", ".join("%s=%s" % (p,p) for p in self.parameters) + ", **moredict)"
         #lamstr = "lambda {args}: np.sum((self.residuals({argdict})/self.phase_uncerts)**2)".format(**locals())
-        lamstr = "lambda {args}: -2*self.efac**2*(self.lnprob({argdict})+self.lnprior({argdict}))".format(**locals())
+        lamstr = "lambda {args}: -2*self.efac**2*(self.lnprob({argdict}, marginalize=False)+self.lnprior({argdict}))".format(**locals())
         #print lamstr
         #print locals()
         g = globals().copy()
