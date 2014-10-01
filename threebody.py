@@ -435,6 +435,7 @@ def compute_orbit(parameter_dict, times, keep_states=True):
         if i+1==report:
            debug("Extracting results")
            report *= 2
+           #report += 1
         if keep_states:
             states[i]=O.x
         ts[i,0]=O.t_bb
@@ -559,7 +560,31 @@ def save_best_parameter_database(bpd):
     with open("best-parameter-database.pickle","wb") as f:
         return pickle.dump(bpd,f)
 
-
+multinest_prior=dict(
+    asini_i=('range',(1.1,1.3)),
+    pb_i=('range',(1.629,1.630)),
+    eps1_i=('range',(-0.1,0.1)),
+    eps2_i=('range',(-0.1,0.1)),
+    tasc_i=('range',(0,1)),
+    acosi_i=('range',(0,10)),
+    q_i=('range',(0.01,1)),
+    asini_o=('range',(70.,80.)),
+    pb_o=('range',(325.,330.)),
+    eps1_o=('range',(-0.1,0.1)),
+    eps2_o=('range',(-0.1,0.1)),
+    tasc_o=('range',(310,320)),
+    acosi_o=('range',(0,200)),
+    delta_lan=('range',(-np.pi,np.pi)),
+    delta=('range',(-0.1,0.1)),
+    dgamma=('normal',(0,2.3e-5)),
+    dbeta=('normal',(0,3e-3)),
+    d_RAJ=('range',(-1e-6,1e-6)),
+    d_DECJ=('range',(-1e-6,1e-6)),
+    j_AO1440=('range',(-1e-3,1e-3)),
+    j_GBT1500=('range',(-1e-3,1e-3)),
+    j_NCY1400=('range',(-1e-3,1e-3)),
+    )
+    
 class Fitter(object):
     """Object representing a data set and model
 
