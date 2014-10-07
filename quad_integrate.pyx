@@ -250,6 +250,42 @@ cdef class ODEDelay:
             d += shapiro_delay(x,self._krhs_q.gamma)
         return d
 
+    def advance_step(self):
+        if self.using_quad:
+            do_step_dense(self._krhs_q[0],self._stepper_q[0])
+        else:
+            do_step_dense(self._krhs[0],self._stepper[0])
+    property previous_t_d:
+        def __get__(self):
+            if self.using_quad:
+                return quad_to_py(self._stepper_q.previous_time())
+            else:
+                return longdouble_to_py(self._stepper.previous_time())
+    property current_t_d:
+        def __get__(self):
+            if self.using_quad:
+                return quad_to_py(self._stepper_q.current_time())
+            else:
+                return longdouble_to_py(self._stepper.current_time())
+    def evaluate_at(self, t_d):
+        cdef vectq* r_q
+        cdef vectl* r
+        #cdef np.ndarray[DTYPE_t, ndim=1] ra
+        cdef longdouble _t_d
+        if self.using_quad:
+            pass
+        else:
+            ra = None
+            _t_d = py_to_longdouble(t_d)
+            if not self._stepper.previous_time()<=_t_d<=self._stepper.current_time():
+                raise ValueError("Evaluation at %g outside current step (%g, %g)"
+                                 % (t_d, self.previous_t_d, self.current_t_d))
+            r = new vectl(self._n)
+            self._stepper.calc_state(_t_d, r[0])
+            ra = vectl_to_array(r)
+            del r
+            return ra
+
     cpdef integrate_to(self, t_bb):
         # We're using uncorrected times
         cdef longdouble _t_bb
