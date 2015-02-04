@@ -35,6 +35,8 @@ with open(args.temptim, "wt") as temptim:
     with open(args.temppulses, "wt") as temppulses:
         for toaline, pulseline in zip(open(args.toafile,"rt").readlines(),
                                       open(args.pulsesfile,"rt").readlines()):
+            if not toaline:
+                continue
             toa = float(toaline[24:44])
             if args.MJD-args.length/2<=toa<=args.MJD+args.length/2:
                 temptim.write(toaline)
@@ -45,7 +47,9 @@ if n==0:
 
 osculating_parameters = np.loadtxt(args.oscfilename)
 i = np.searchsorted(osculating_parameters[:,0],args.MJD)
-if osculating_parameters[i+1,0]-args.MJD<args.MJD-osculating_parameters[i,0]:
+if i==len(osculating_parameters):
+    i -= 1
+elif osculating_parameters[i+1,0]-args.MJD<args.MJD-osculating_parameters[i,0]:
     i += 1
 col_names = open(args.oscfilename).readline().split()[1:]
 d = dict(zip(col_names,osculating_parameters[i]))
@@ -128,7 +132,7 @@ while True:
 
     l = o.split("\n")[-2]
     print l
-    m = re.search(r"[Pp]re-fit\s*(\d+.\d+)+\s+us", l)
+    m = re.search(r"[Pp]re-fit\s+(\d+.\d+)+\s+us", l)
     error = float(m.group(1))
     print error
     if error<10:

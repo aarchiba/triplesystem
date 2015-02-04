@@ -13,6 +13,9 @@ import numpy.random
 import scipy.linalg
 import scipy.optimize
 
+import astropy.table
+import astropy.time
+
 import kepler
 import quad_integrate
 
@@ -29,6 +32,13 @@ def mjd_fromstring(s, base_mjd=0):
     i = int(i)-base_mjd
     f = np.float128("0."+f)
     return i+f
+
+abbreviate_infos = {
+    'Arecibo,L-band,PUPPI_coherent_fold': 'AO1440',
+    'GBT,L-band,GUPPI_coherent_fold': 'GBT1500',
+    'GBT,L-band,GUPPI_coherent_search': 'GBT1500s',
+    'WSRT,L-band,PUMAII_coherent_fold': 'WSRT1400',
+    }
 
 #              tempo2_program = '/home/aarchiba/software/tempo2/tempo2/tempo2',
 #              tempo2_dir = '/home/aarchiba/software/tempo2/t2dir',
@@ -648,7 +658,36 @@ class Fitter(object):
         self.kopeikin = kopeikin
 
         self.files = files
-        if files is not None:
+        try:
+            V = astropy.table.Table.read(files)
+        except Exception:
+            V = None
+        if V is not None:
+            self.base_mjd = 55920
+            self.btoas = astropy.time.Time(np.asarray(V['btoas'][:,0]),
+                                        np.asarray(V['btoas'][:,1]),
+                                        format='jd',
+                                        scale='tdb') # our F0 value is TCB
+            self.mjds = ((self.btoas.jd1
+                          -2400000.5
+                          -self.base_mjd).astype(np.float128)
+                          +self.btoas.jd2.astype(np.float128))
+            self.pulses = np.array(V['pulse'], dtype=float)
+            self.uncerts = 1e-6*np.array(V['errors'])
+            self.derivs = {}
+            self.tel_list = sorted(abbreviate_infos[i] for i in set(V['infos']))
+            self.tels = np.array([self.tel_list.index(abbreviate_infos[V['infos'][i]])
+                                  for i in range(len(V))])
+            ix = np.argsort(self.mjds)
+            self.ix = ix
+            
+            self.btoas = self.btoas[ix]
+            self.mjds = self.mjds[ix]
+            self.pulses = self.pulses[ix]
+            self.uncerts = self.uncerts[ix]
+            self.tels = self.tels[ix]
+            
+        elif files is not None:
             if self.parfile == "0337_bogus.par":
                 outname = files+".out"
             else:
@@ -808,6 +847,8 @@ class Fitter(object):
             self.efac = 1.
             self.raw_uncerts = self.uncerts.copy()
             for i,t in enumerate(self.tel_list):
+                if t not in edict:
+                    continue
                 c = self.tels == i
                 self.uncerts[c] *= edict[t]
         self.phase_uncerts = self.uncerts*self.best_parameters['f0']
@@ -864,7 +905,7 @@ class Fitter(object):
         debug("Started compute_orbit for %s" % repr(p))
         if p!=self.last_p:
             debug("compute_orbit cache miss, running calculation")
-            jumps = np.dot(self.jmatrix,np.array([p[n] for n in self.jnames]))
+            jumps = np.dot(self.jmatrix,np.array([p.get(n,0) for n in self.jnames]))
             debug("Calling compute_orbit")
             o = compute_orbit(p,
                     (self.mjds)-(jumps/86400.).astype(np.float128),
