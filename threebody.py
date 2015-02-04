@@ -240,6 +240,7 @@ def trend_matrix(mjds, tel_list, tels,
         for n in new_names:
             non_orbital_basis.append(derivs[n])
     if jumps:
+        debug("base telescope %s from list of %s" % (tel_base,tel_list))
         tl2 = list(tel_list)[:]
         tl2.remove(tel_base)
         tel_index = np.array([tel_list.index(t) for t in tl2])
@@ -916,7 +917,7 @@ class Fitter(object):
         else:
             debug("compute_orbit cache hit")
         return self.last_orbit
-    def residuals(self, p, times=None, marginalize=False):
+    def residuals(self, p, linear_jumps=False, marginalize=False):
         """Compute the phase residuals corresponing to a parameter dict
 
         Given a set of parameters, compute the orbit, then evaluate
@@ -962,6 +963,9 @@ class Fitter(object):
             b = self.pulses.copy()
             At = [np.ones(len(self.pulses),dtype=t_psr_s.dtype),
                   (t_psr_s/t_psr_s[-1]), (t_psr_s/t_psr_s[-1])**2]
+            if linear_jumps:
+                for i in range(1,len(self.tel_list)):
+                    At.append(self.tels==i) 
             A = np.array(At).T
             for i in range(3):
                 debug("Linear least-squares iteration %d" % i)
@@ -972,6 +976,8 @@ class Fitter(object):
                     sys.stderr.write("Warning: illegal value appeared in least-squares fitting: %s" % x)
                     break
                 b -= np.dot(A,x)
+                debug("A[0]: %s b[0]: %s" % (A[0],b[0]))
+                debug("x: %s" % x)
                 debug("Linear least-squares residual RMS %g" % np.sqrt(np.mean(b**2)))
             debug("Done linear least-squares")
             if marginalize:
@@ -980,7 +986,7 @@ class Fitter(object):
                 return -b, 0.5*m
             else:
                 return -b
-    def compute_linear_parts(self, p=None, t_psr=None):
+    def compute_linear_parts(self, p=None, linear_jumps=False, t_psr=None):
         debug("Computing linear parts")
         if p is None:
             p = self.best_parameters
@@ -988,21 +994,33 @@ class Fitter(object):
             o = self.compute_orbit(p)
             t_psr = o['t_psr']
         t_psr_s = t_psr*86400.
-        At = [np.ones(len(t_psr_s)), t_psr_s, 0.5*t_psr_s**2]
+        At = [np.ones(len(t_psr_s)), t_psr_s/t_psr_s[-1], 0.5*(t_psr_s/t_psr_s[-1])**2]
+        if linear_jumps:
+            tl2 = list(self.tel_list)[:]
+            tl2.remove(self.tel_base)
+            tel_index = np.array([self.tel_list.index(t) for t in tl2])
+            for t in tel_index:
+                At.append(self.tels==t) 
         b = self.pulses.copy()
         A = np.array(At).T
-        r = np.zeros(3,dtype=np.float128)
+        r = np.zeros(A.shape[1],dtype=np.float128)
         for i in range(3):
             x, rk, res, s = scipy.linalg.lstsq(A/self.phase_uncerts[:,None],
                                                b/self.phase_uncerts)
             b -= np.dot(A,x)
+            debug("A[0]: %s b[0]: %s" % (A[0],b[0]))
+            debug("x: %s" % x)
             debug("residual %f" % np.sum((b/self.phase_uncerts)**2))
+            debug("residual RMS %f" % np.sqrt(np.mean(b**2)))
             r += x
-        f0 = r[1]
-        f1 = r[2]
+        f0 = r[1]/t_psr_s[-1]
+        f1 = r[2]/t_psr_s[-1]**2
         def err(tzrmjd_s):
             phase = f0*t_psr_s+f1*t_psr_s**2/2.
             phase -= f0*tzrmjd_s+f1*tzrmjd_s**2/2.
+            if linear_jumps:
+                for i, t in enumerate(tel_index):
+                    phase += r[3+i]*(self.tels==t)                     
             rr = phase-self.pulses
             rr /= self.phase_uncerts
             return np.sum(rr**2)
@@ -1015,9 +1033,14 @@ class Fitter(object):
             tol=1e-160)
 
         debug("done")
-        return dict(f0=f0, f1=f1, tzrmjd_base=self.base_mjd,
+        d = dict(f0=f0, f1=f1, tzrmjd_base=self.base_mjd,
                     tzrmjd=tzrmjd_s/86400)
-
+        if linear_jumps:
+            for i,t in enumerate(tel_index):
+                n = "j_"+self.tel_list[t]
+                d[n] = p.get(n,0)-r[3+i]/f0
+        return d
+        
     def lnprob(self, p, marginalize=True):
         """Return the log-likelihood of the fit"""
         if marginalize:
