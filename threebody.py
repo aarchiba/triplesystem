@@ -615,6 +615,7 @@ class Fitter(object):
                  special=True,general=True,
                  kopeikin=False,
                  shapiro=True,
+                 linear_jumps=False,
                  priors=()):
         """Set up a Fitter object
 
@@ -657,7 +658,8 @@ class Fitter(object):
         self.shapiro = shapiro
         self.t2_astrometry = t2_astrometry
         self.kopeikin = kopeikin
-
+        self.linear_jumps = linear_jumps
+        
         self.files = files
         try:
             V = astropy.table.Table.read(files)
@@ -865,7 +867,9 @@ class Fitter(object):
             parallax=self.fit_px,
             derivs=self.derivs,
             const=False, P=False, Pdot=False, jumps=True)
-        self.parameters += self.jnames
+
+        if not self.linear_jumps:
+            self.parameters += self.jnames
         self.priors = frozenset(priors)
         self.last_p = None
         self.last_orbit = None
@@ -917,7 +921,7 @@ class Fitter(object):
         else:
             debug("compute_orbit cache hit")
         return self.last_orbit
-    def residuals(self, p, linear_jumps=False, marginalize=False):
+    def residuals(self, p=None, linear_jumps=None, marginalize=False):
         """Compute the phase residuals corresponing to a parameter dict
 
         Given a set of parameters, compute the orbit, then evaluate
@@ -942,6 +946,10 @@ class Fitter(object):
         these linear parameters.
         """
         debug("Started residuals for %s" % repr(p))
+        if linear_jumps is None:
+            linear_jumps = self.linear_jumps
+        if p is None:
+            p = self.best_parameters
         o = self.compute_orbit(p)
         t_psr_s = o['t_psr']*86400.
         if 'tzrmjd' in p and 'f1' in p and 'f0' in p:
@@ -986,8 +994,10 @@ class Fitter(object):
                 return -b, 0.5*m
             else:
                 return -b
-    def compute_linear_parts(self, p=None, linear_jumps=False, t_psr=None):
+    def compute_linear_parts(self, p=None, linear_jumps=None, t_psr=None):
         debug("Computing linear parts")
+        if linear_jumps is None:
+            linear_jumps = self.linear_jumps
         if p is None:
             p = self.best_parameters
         if t_psr is None:

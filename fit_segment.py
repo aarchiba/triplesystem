@@ -26,11 +26,14 @@ parser.add_argument("--oscfilename",
         help="File listing osculating orbits", default="osculating.txt")
 parser.add_argument("--fixedbtx",
         help="BTX model includes Doppler correction", action="store_true")
+parser.add_argument("--zerofirst",
+        help="First pulse is number zero", action="store_true")
 
 args = parser.parse_args()
 
 
 n = 0
+np0 = 0
 with open(args.temptim, "wt") as temptim:
     with open(args.temppulses, "wt") as temppulses:
         for toaline, pulseline in zip(open(args.toafile,"rt").readlines(),
@@ -40,7 +43,12 @@ with open(args.temptim, "wt") as temptim:
             toa = float(toaline[24:44])
             if args.MJD-args.length/2<=toa<=args.MJD+args.length/2:
                 temptim.write(toaline)
-                temppulses.write(pulseline)
+                if n==0:
+                    np0 = int(pulseline)
+                if args.zerofirst:
+                    temppulses.write(str(int(pulseline)-np0)+"\n")
+                else:
+                    temppulses.write(pulseline)
                 n += 1
 if n==0:
     raise ValueError("Input MJD past end or before beginning of simulated TOAs")
@@ -49,7 +57,7 @@ osculating_parameters = np.loadtxt(args.oscfilename)
 i = np.searchsorted(osculating_parameters[:,0],args.MJD)
 if i==len(osculating_parameters):
     i -= 1
-elif osculating_parameters[i+1,0]-args.MJD<args.MJD-osculating_parameters[i,0]:
+elif i<len(osculating_parameters)-1 and osculating_parameters[i+1,0]-args.MJD<args.MJD-osculating_parameters[i,0]:
     i += 1
 col_names = open(args.oscfilename).readline().split()[1:]
 d = dict(zip(col_names,osculating_parameters[i]))
@@ -132,13 +140,14 @@ while True:
 
     l = o.split("\n")[-2]
     print l
-    m = re.search(r"[Pp]re-fit\s+(\d+.\d+)+\s+us", l)
+    m = re.search(r"[Pp]re-fit\s*((\d+.\d+)|NaN)+\s+us", l)
     error = float(m.group(1))
     print error
+    break
     if error<10:
         break
     if n>10:
-        raise ValueError
+        raise ValueError("TEMPO does not appear to be converging")
     n += 1
     shutil.copy("J0337+17.par", args.tempparfile)
 
