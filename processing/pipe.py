@@ -4,6 +4,9 @@ import os
 import subprocess
 from glob import glob
 import pickle
+import shutil
+import numpy as np
+from backports import tempfile
 
 from logging import info, debug, error, warning, critical
 
@@ -217,6 +220,34 @@ tempo2 = Tempo2Command("tempo2", infiles=["f", "ft1", "ft2"],
 
 
 
+class CalledProcessError(subprocess.CalledProcessError):
+    def __init__(self, cmd, returncode, output=None, error=None):
+        self.cmd = cmd
+        self.returncode = returncode
+        self.output = output
+        self.error = error
+
+    def __str__(self):
+        return """CalledProcessError(
+            cmd=%s,
+            returncode=%d,
+            output='''%s''',
+            error='''%s''')""" % (self.cmd,
+                                      self.returncode,
+                                      self.output,
+                                      self.error)
+
+def check_call(cmd, stderr_re=None, shell=False, cwd=None):
+    P = subprocess.Popen(cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    shell=shell,
+                    cwd=cwd)
+    output, error = P.communicate()
+    returncode = P.returncode
+    del P
+    if returncode or (stderr_re is not None and re.search(stderr_re, error)):
+        raise CalledProcessError(cmd, returncode, output=output, error=error)
 
 
 
@@ -259,3 +290,35 @@ class Observation(object):
 
     def make_toas(self):
         pass
+
+
+class EphemerisCollection(object):
+
+    def __init__(self, directory, spacing=4, mjdbase=55920,
+        fit_segment_dir="/home/aarchiba/projects/triplesystem/processing"):
+        self.directory = directory
+        self.spacing = spacing
+        self.mjdbase = mjdbase
+        self.fit_segment_dir = fit_segment_dir
+        if not os.path.exists(self.directory):
+            os.mkdir(directory)
+
+    def _generate(self, mjd, name):
+        with tempfile.TemporaryDirectory() as td:
+            fs = self.fit_segment_dir + "/fit_segment.py"
+            check_call(["python", fs,
+                        "--toafile", self.fit_segment_dir + "/fake.tim",
+                        "--pulsesfile", self.fit_segment_dir + "/fake.pulses",
+                        "--oscfilename", self.fit_segment_dir + "/osculating.txt",
+                        "--length", str(2*self.spacing),
+                        str(mjd)],
+                       cwd=td)
+            shutil.copy(td+"/J0337+17.par", name)
+
+    def get_par_for(self, mjd):
+        par_mjd = int(self.mjdbase
+                    +self.spacing*np.round((mjd-self.mjdbase)/self.spacing))
+        name = self.directory + "/%s.par" % par_mjd
+        if not os.path.exists(name):
+            self._generate(par_mjd, name)
+        return name
