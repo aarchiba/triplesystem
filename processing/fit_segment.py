@@ -10,13 +10,16 @@ import numpy as np
 
 parser = argparse.ArgumentParser()
 parser.add_argument("MJD", help="MJD of the observation", type=float)
-parser.add_argument("--length", help="Length of the orbital segment to fit (days)",
+parser.add_argument("--length",
+        help="Length of the orbital segment to fit (days)",
         default=10., type=float)
 parser.add_argument("--toafile", help="File listing simulated TOAs",
         default="fake.tim")
-parser.add_argument("--pulsesfile", help="File listing pulse numbers (must be exactly one per fake TOA)",
+parser.add_argument("--pulsesfile",
+        help="File listing pulse numbers (must be exactly one per fake TOA)",
         default="fake.pulses")
-parser.add_argument("--tempparfile", help="par file to create and ask TEMPO to fit",
+parser.add_argument("--tempparfile",
+        help="par file to create and ask TEMPO to fit",
         default="temposculating.par")
 parser.add_argument("--temptim", help="tim file containing segment",
         default="temp.tim")
