@@ -295,7 +295,7 @@ class Observation(object):
 class EphemerisCollection(object):
 
     def __init__(self, directory, spacing=4, mjdbase=55920,
-        fit_segment_dir="/home/aarchiba/projects/triplesystem/processing"):
+        fit_segment_dir="/misc/astron/archibald/projects/triplesystem/processing"):
         self.directory = directory
         self.spacing = spacing
         self.mjdbase = mjdbase
@@ -309,7 +309,6 @@ class EphemerisCollection(object):
             check_call(["python", fs,
                         "--toafile", self.fit_segment_dir + "/fake.tim",
                         "--pulsesfile", self.fit_segment_dir + "/fake.pulses",
-                        "--oscfilename", self.fit_segment_dir + "/osculating.txt",
                         "--length", str(2*self.spacing),
                         str(mjd)],
                        cwd=td)

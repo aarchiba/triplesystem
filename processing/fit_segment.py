@@ -8,7 +8,24 @@ import shutil
 
 import numpy as np
 
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser(
+    description="Fit a par file to a short segment of the triple system orbit",
+    epilog="""WARNING:
+
+The output ephemeris only works with tempo 1. Tempo2 does not support the
+two-orbit BTX model needed, and so it silently ignores this model. So if you
+are generating polyco's, use tempo 1. If you are using PSRCHIVE, it usually
+defaults to using tempo2, which will result in silently misaligned files.
+To force PSRCHIVE to use tempo1, place the following lines in your
+$HOME/.psrchive.cfg:
+
+Predictor::default = polyco
+Predictor::policy = default
+
+These force the use of tempo 1, so you may need to remove them if you want to
+work with tempo2 ephemerides. This unsatisfying solution appears to be the
+best option currently available.
+""")
 parser.add_argument("MJD", help="MJD of the observation", type=float)
 parser.add_argument("--length",
         help="Length of the orbital segment to fit (days)",
@@ -25,10 +42,6 @@ parser.add_argument("--temptim", help="tim file containing segment",
         default="temp.tim")
 parser.add_argument("--temppulses", help="tim file containing segment",
         default="temp.pulses")
-parser.add_argument("--oscfilename",
-        help="File listing osculating orbits", default="osculating.txt")
-parser.add_argument("--fixedbtx",
-        help="BTX model includes Doppler correction", action="store_true")
 
 args = parser.parse_args()
 
@@ -48,82 +61,38 @@ with open(args.temptim, "wt") as temptim:
 if n==0:
     raise ValueError("Input MJD past end or before beginning of simulated TOAs")
 
-osculating_parameters = np.loadtxt(args.oscfilename)
-i = np.searchsorted(osculating_parameters[:,0],args.MJD)
-if i==len(osculating_parameters):
-    i -= 1
-elif osculating_parameters[i+1,0]-args.MJD<args.MJD-osculating_parameters[i,0]:
-    i += 1
-col_names = open(args.oscfilename).readline().split()[1:]
-d = dict(zip(col_names,osculating_parameters[i]))
-
-if args.fixedbtx:
-    d['model'] = "BTX"
-else:
-    d['model'] = "BTX"
-    d['t0_i'] = d['t0_i']+d['z_i']/86400
-    d['pb_i'] = d['pb_i']*(1+d['vz_i']/86400.)
-
-template_noastro = """PSR              J0337+17
+fit_par = """PSR              J0337+17
 RAJ      03:37:43.82589000
 DECJ      17:15:14.8281000
-F0                  {f0!r} 1
-F1                  {f1!r} 1
+POSEPOCH        56337.0000
+F0    365.9533436437517366  1  0.0000000000025982
+F1      3.459285698888D-16  1  5.908704611672D-19
 PEPOCH        56100.000000
+START            55917.314
+FINISH           56436.494
 DM               21.313000
 SOLARN0              10.00
-EPHEM             DE405
 CLK               UTC(NIST)
-TZRMJD  56100.13622674904489
+NTOA                 26296
+TRES                 38.47
+TZRMJD  56100.13969898816173
 TZRFRQ            1379.999
-TZRSITE                  @
-NITS                     1
-BINARY             {model}
+TZRSITE                  j
+BINARY            BTX
 PLAN  1
-A1             {asini_i!r} 1
-E                  {e_i!r} 1
-T0                {t0_i!r} 1
-OM                {om_i!r} 1
-PB                {pb_i!r} 1
-A1_2           {asini_o!r}
-E_2                {e_o!r}
-T0_2              {t0_o!r} 1
-PB_2              {pb_o!r}
-OM_2              {om_o!r}
-"""
-template = """PSR              J0337+17
-RAJ      03:37:43.826099
-DECJ      17:15:14.826651
-PX                    1.40
-PMRA                  3.56
-PMDEC                -3.90
-F0                  {f0!r} 1
-F1                  {f1!r} 1
-POSEPOCH 56500
-PEPOCH        56100.000000
-DM               21.313000
-SOLARN0              10.00
-EPHEM             DE405
-CLK               UTC(NIST)
-TZRMJD  56100.13622674904489
-TZRFRQ            1379.999
-TZRSITE                  @
-NITS                     1
-BINARY             {model}
-PLAN  1
-A1             {asini_i!r} 1
-E                  {e_i!r} 1
-T0                {t0_i!r} 1
-OM                {om_i!r} 1
-PB                {pb_i!r} 1
-A1_2           {asini_o!r}
-E_2                {e_o!r}
-T0_2              {t0_o!r} 1
-PB_2              {pb_o!r}
-OM_2              {om_o!r}
+A1             1.217528496  1         0.000000010
+E             0.0006802884  1        0.0000000154
+T0         55917.574547351  1         0.000006180
+OM         94.157681118988  1      0.001365536908
+FB0     7.103160919367D-06  1  2.040868704844D-16
+A1_2          74.668594264
+E_2            0.035347540
+T0_2       56317.235447282  1         0.000000705
+PB_2      327.219804954111
+OM_2       95.726944226135
 """
 with open(args.tempparfile, "wt") as f:
-    f.write(template.format(**d))
+    f.write(fit_par)
 
 n = 0
 while True:
@@ -138,9 +107,9 @@ while True:
     m = re.search(r"[Pp]re-fit\s+(\d+.\d+)+\s+us", l)
     error = float(m.group(1))
     print error
-    if error<10:
+    if error<5:
         break
-    if n>10:
+    if n>5:
         raise ValueError
     n += 1
     shutil.copy("J0337+17.par", args.tempparfile)

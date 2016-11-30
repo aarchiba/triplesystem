@@ -12,10 +12,10 @@ SOLARN0              10.00
 CLK               UTC(NIST)   
 NTOA                 26296
 TRES                 38.47
-TZRMJD  56100.13969898816173
-TZRFRQ            1379.999
-TZRSITE                  j
-BINARY            BTX     
+TZRMJD             56100.0  1
+TZRFRQ          999999.999
+TZRSITE                  @
+BINARY                 BTX     
 PLAN  1
 A1             1.217528496  1         0.000000010
 E             0.0006802884  1        0.0000000154
