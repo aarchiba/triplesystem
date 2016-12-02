@@ -47,6 +47,7 @@ args = parser.parse_args()
 
 
 n = 0
+tzrmjd = None
 with open(args.temptim, "wt") as temptim:
     with open(args.temppulses, "wt") as temppulses:
         for toaline, pulseline in zip(open(args.toafile,"rt").readlines(),
@@ -56,10 +57,14 @@ with open(args.temptim, "wt") as temptim:
             toa = float(toaline[24:44])
             if args.MJD-args.length/2<=toa<=args.MJD+args.length/2:
                 temptim.write(toaline)
+                if tzrmjd is None:
+                    tzrmjd = toaline.split()[2]
                 temppulses.write(pulseline)
                 n += 1
 if n==0:
     raise ValueError("Input MJD past end or before beginning of simulated TOAs")
+
+print "input TZRMJD:", tzrmjd
 
 fit_par = """PSR              J0337+17
 RAJ      03:37:43.82589000
@@ -68,17 +73,15 @@ POSEPOCH        56337.0000
 F0    365.9533436437517366  1  0.0000000000025982
 F1      3.459285698888D-16  1  5.908704611672D-19
 PEPOCH        56100.000000
-START            55917.314
-FINISH           56436.494
 DM               21.313000
 SOLARN0              10.00
 CLK               UTC(NIST)
 NTOA                 26296
 TRES                 38.47
-TZRMJD  56100.13969898816173
-TZRFRQ            1379.999
-TZRSITE                  j
-BINARY            BTX
+TZRMJD            {tzrmjd}
+TZRSITE                  @
+TZRFREQ         999999.999
+BINARY                 BTX
 PLAN  1
 A1             1.217528496  1         0.000000010
 E             0.0006802884  1        0.0000000154
@@ -92,7 +95,7 @@ PB_2      327.219804954111
 OM_2       95.726944226135
 """
 with open(args.tempparfile, "wt") as f:
-    f.write(fit_par)
+    f.write(fit_par.format(tzrmjd=tzrmjd))
 
 n = 0
 while True:
@@ -105,10 +108,11 @@ while True:
     l = o.split("\n")[-2]
     print l
     m = re.search(r"[Pp]re-fit\s+(\d+.\d+)+\s+us", l)
-    error = float(m.group(1))
-    print error
-    if error<5:
-        break
+    if m is not None:
+        error = float(m.group(1))
+        print error
+        if error<5:
+            break
     if n>5:
         raise ValueError
     n += 1
