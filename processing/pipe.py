@@ -14,10 +14,17 @@ import re
 import time
 from numpy.fft import rfft, irfft, fft, ifft
 import scipy.optimize
+import signal
+
+import astropy.units as u
+import astropy.coordinates
 
 from logging import info, debug, error, warning, critical
 
 import psrchive
+import residuals
+
+from template_match import rotate_phase, convert_template, align_profile, align_scale_profile
 
 # tools for make-like conditional rerunning
 
@@ -377,79 +384,6 @@ class EphemerisCollection(object):
 
 
 
-def rotate_phase(prof, phase):
-    """Rotate phase of profile earlier"""
-    fprof = fft(prof)
-    #assert len(fprof)!=len(prof), "Must use numpy-style rfft not scipy-style"
-    # top coefficient is special in even-length real FFTs
-    # save it so phase shifting is non-destructive
-    #topco = fprof[-1]
-    n = len(fprof)
-    fprof[:n//2] *= np.exp(2.j*np.pi*np.arange(n//2)*phase)
-    fprof[-(n//2)+1:] *= np.exp(2.j*np.pi*np.arange(-(n//2)+1,0)*phase)
-    #fprof[-1] = topco
-    return ifft(fprof).real
-
-def convert_template(template, nbins):
-    """Convert template to match prof (in length)
-
-    Either down- or up-sample template so that it is the same length
-    as prof. Use the Fourier domain; either drop or pad with zero
-    the extra Fourier coefficients.
-    """
-    return irfft(rfft(template),nbins)*(float(nbins)/len(template))
-
-def align_profile(template, prof):
-    """Use cross-correlation to align template optimally with prof
-
-    Return phase so that prof is approximately equal to
-    rotate_phase(template,phase)*amp + bg
-    (actually this should be a least-squares minimization).
-
-    Note that swapping template and prof simply changes the sign of
-    the resulting phase; the code is otherwise symmetrical.
-
-    The code requires the template to have the same length as the
-    profile.
-
-    FIXME: can fail if the shift is exactly a half-bin.
-    """
-    ftemplate = fft(template)
-    fprof = fft(prof)
-    fcorr = ftemplate*np.conj(fprof)
-    fcorr[0] = 0 # Ignore the constant
-    fcorr[len(fcorr)//2] = 0 # Ignore the annoying middle component
-    corr = ifft(fcorr)
-    i = np.argmax(np.abs(corr))
-    iphase = float(i)/len(corr)
-    n = len(fcorr)
-    def peak(p):
-        return -np.abs(np.sum(fcorr[1:n//2]
-                                  *np.exp(2.j*np.pi*np.arange(1,n//2)*p))
-                 +np.sum(fcorr[-(n//2)+1:]
-                             *np.exp(2.j*np.pi*np.arange(-(n//2)+1,0)*p)))
-    r = scipy.optimize.minimize_scalar(peak,
-                    bracket=(iphase-2./len(corr),
-                             iphase,
-                             iphase+2./len(corr)))
-    phase = (r.x+0.5)%1-0.5
-    return phase
-
-def align_scale_profile(template, prof):
-    """Use cross-correlation to align template optimally with prof
-
-    Return phase, amp, bg so that prof is approximately equal to
-    rotate_phase(template,phase)*amp + bg
-    (actually this should be a least-squares minimization).
-    """
-    phase = align_profile(template, prof)
-    rtemp = rotate_phase(template,phase)
-    tz = rtemp - np.mean(rtemp)
-    pz = prof - np.mean(prof)
-    amp = np.dot(tz, pz)/np.dot(tz,tz)
-    bg = np.mean(prof)-np.mean(rtemp)*amp
-    return phase, amp, bg
-
 
 # Metadata contents:
 # name - observation name
@@ -474,9 +408,13 @@ def align_scale_profile(template, prof):
 # manual_zap_channels - list of lists
 # calibration_type - none, flux, or polarization
 
+class ProcessingError(ValueError):
+    pass
+
 # Gathering raw data
 
-data_location = "/psr_archive/hessels/archibald/0337+17"
+#data_location = "/psr_archive/hessels/archibald/0337+17"
+data_location = "/data/archibald/0337+1715"
 scratch_location = "/data/archibald/scratch"
 par_db = EphemerisCollection(directory=join(data_location,"ephemerides"))
 wsrt_raw_location = join(data_location,"raw","WSRT")
@@ -861,7 +799,7 @@ def cleanup(obs, work_dir=None):
                 shutil.copy(tf, cfP)
         else:
             # FIXME: don't hardcode the path
-            check_call(["pac","-Ta",
+            check_call(["pac","-Tax",
                             "-d","data/cal/cal.db"]
                            + tfs)
         if "receiver" not in M: # forgotten on first pass
@@ -869,16 +807,28 @@ def cleanup(obs, work_dir=None):
         zo = zap[M['receiver']]
         check_call(["paz", "-r", "-R", "20", "-e", "zap"]
                        + zo + cfPs)
-        if M["tel"] in ["AO", "GBT"]:
+        if M["tel"] in ["AO"]:
             for zf in zfs:
                 F = psrchive.Archive_load(zf)
+                radeg, decdeg = (F.get_coordinates().angle1.getDegrees(), 
+                                 F.get_coordinates().angle2.getDegrees()) 
+                srcpos = astropy.coordinates.SkyCoord(ra=radeg*u.degree, 
+                                                      dec=decdeg*u.degree, 
+                                                      frame='icrs')
                 za_res = []
+                zas = []
                 for i in range(F.get_nsubint()):
                     I = F.get_Integration(i)
-                    if I.get_telescope_zenith() < 1.5:
+                    st = I.get_start_time().in_days()
+                    t = astropy.time.Time(st, format='mjd')
+                    altaz = srcpos.transform_to(astropy.coordinates.AltAz(
+                        obstime=t, location=arecibo_location))
+                    if 90-altaz.alt.value < 1.13:
                         za_res.append(i)
+                        zas.append(I.get_telescope_zenith())
                 if za_res:
-                    info("Zapping subintegrations in keyhole: %s", za_res)
+                    info("Zapping subintegrations in ZA keyhole: %s", za_res)
+                    info("Zenith angles: %s", zas)
                     check_call(["paz", "-m", "-w",
                                 " ".join([str(i) for i in za_res]),
                                 zf])
@@ -910,6 +860,17 @@ def copy_if_newer(fi, fo):
             or os.path.getmtime(fo)<os.path.getmtime(fi)):
         shutil.copy(fi,fo)
 
+def defaraday(meta, inpat, outpat, rm, flip_rm_sign=False):
+    work_dir = meta["work_dir"]
+    infiles = sorted(glob(join(work_dir,inpat+"_*.ar")))
+    outfiles = [join(work_dir,outpat+"_%04d.ar"%i) for i in range(len(infiles))]
+    for (fi, fo) in zip(infiles, outfiles):
+        meta["RM"] = rm
+        meta["flip_rm_sign"] = flip_rm_sign
+        if flip_rm_sign:
+            rm = -rm
+        pam(fi, output=fo, R=rm)
+
 def realign(meta, inpat, outpat, align_mode):
     work_dir = meta["work_dir"]
     infiles = sorted(glob(join(work_dir,inpat+"_*.ar")))
@@ -918,10 +879,11 @@ def realign(meta, inpat, outpat, align_mode):
         meta["smearing"] = [None]*len(infiles)
     for i, (fi, fo) in enumerate(zip(infiles, outfiles)):
         if align_mode == "none":
-            copy_if_newer(fi,fo)
+            # NOTE: convert to psrfits to be sure the backend correction doesn't crash
+            pam(fi, output=fo, a="psrfits")
         elif align_mode == "par":
             par = par_db.get_par_for(meta["mjd"])
-            pam(fi, output=fo, E=par, ephver="tempo")
+            pam(fi, output=fo, E=par, a="psrfits", ephver="tempo")
             F = psrchive.Archive_load(fi)
             G = psrchive.Archive_load(fo)
             meta["smearing"][i] = smearing(F,G)
@@ -941,8 +903,12 @@ def calibrate(meta, inpat, outpat, cal_db):
         if (not os.path.exists(fo)
             or os.path.getmtime(fo)<os.path.getmtime(fi)):
             if cal_db is not None and meta["tel"] != "WSRT":
-                subprocess.check_call(["pac", "-Ta", "-d", cal_db, fi])
                 fio = re.sub(r"\.ar$",".calib", fi)
+                # Find out whether a full Reception model is available by trying
+                subprocess.check_call(["pac", "-TaS", "-d", cal_db, fi])
+                if not os.path.exists(fio):
+                    # Doesn't exist, use default
+                    subprocess.check_call(["pac", "-Ta", "-d", cal_db, fi])
                 if os.path.exists(fio+"P"):
                     shutil.copy(fio+"P", fo)
                     meta["calibration_type"] = "polarization"
@@ -952,6 +918,7 @@ def calibrate(meta, inpat, outpat, cal_db):
             else:
                 shutil.copy(fi,fo)
                 meta["calibration_type"] = "none"
+            subprocess.check_call(["./update_be_delay",fo])
 
 def zap_rfi(meta, inpat, outpat, median_r):
     work_dir = meta["work_dir"]
@@ -965,16 +932,38 @@ def zap_rfi(meta, inpat, outpat, median_r):
         zo = zap[meta['receiver']]
         paz(fi, *zo, output=ft1, r=None, R=median_r)
         # FIXME: allow manual zapping
-        if meta["tel"] in ["AO", "GBT"]:
+        if meta["tel"] in ["AO"]:
             F = psrchive.Archive_load(ft1)
+            # from obsys.dat
+            arecibo_location = astropy.coordinates.EarthLocation(
+                x=2390490.0*u.m,y=-5564764.0*u.m,z=1994727.0*u.m)
+            radeg, decdeg = (F.get_coordinates().angle1.getDegrees(), 
+                             F.get_coordinates().angle2.getDegrees()) 
+            srcpos = astropy.coordinates.SkyCoord(ra=radeg*u.degree, 
+                                                  dec=decdeg*u.degree, 
+                                                  frame='icrs')
             za_res = []
+            zas = []
             for i in range(F.get_nsubint()):
                 I = F.get_Integration(i)
-                if I.get_telescope_zenith() < 1.5:
+                # Use astropy to compute zenith angle; weirdly this is off by about
+                # 0.01 degrees but sometimes the ZA values in the file are completely
+                # bogus
+                st = I.get_start_time().in_days()
+                t = astropy.time.Time(st, format='mjd')
+                altaz = srcpos.transform_to(astropy.coordinates.AltAz(
+                    obstime=t, location=arecibo_location))
+                za = 90-altaz.alt.value
+                if za < 1.13:
+                    # in practice, 1.13 seems to be where the telescope goes off source
+                    # Though I've seen it go down to 1.06 in reality, the file I analyzed
+                    # cut off at 1.13 degrees.
                     za_res.append(i)
+                    zas.append(za)
             del F
             if za_res:
-                info("Zapping subintegrations in keyhole: %s", za_res)
+                info("Zapping subintegrations in ZA keyhole: %s", za_res)
+                info("ZAs: %s", zas)
                 paz(ft1, output=ft2, w=" ".join([str(i) for i in za_res]))
             else:
                 copy_if_newer(ft1,ft2)
@@ -1034,7 +1023,9 @@ def process_observation(obs_dir, result_name,
                         cal_db="data/cal/cal.db",
                         median_r=20,
                         toa_bw=np.inf,
-                        toa_time=10.):
+                        toa_time=10.,
+                        rm=None,
+                        flip_rm_sign=False):
     """Process observation through to TOAs
 
     Arguments
@@ -1086,7 +1077,12 @@ def process_observation(obs_dir, result_name,
 
         realign(meta, "raw", "align",
                 align_mode=align_mode)
-        calibrate(meta, "align", "cal", cal_db)
+        if rm is None:
+            calibrate(meta, "align", "cal", cal_db)
+        else:
+            calibrate(meta, "align", "calint", cal_db)
+            defaraday(meta, "calint", "cal",
+                      rm=rm, flip_rm_sign=flip_rm_sign)
         # Check for extra zap list, e.g. pazi output
         # To produce this use pazi and hit p, which prints out an
         # equivalent paz command; the user would then have to save
@@ -1103,8 +1099,6 @@ def process_observation(obs_dir, result_name,
                 toa_bw=toa_bw, toa_time=toa_time)
         with open(join(work_dir,"process.pickle"),"wb") as f:
             pickle.dump(meta,f)
-        # Summary plots are more useful after TOA generation
-        #make_summary_plots(meta, "summary.pdf")
 
         if not os.path.exists(join(obs_dir,result_name)):
             os.makedirs(join(obs_dir,result_name))
@@ -1132,3 +1126,487 @@ def generate_toa(obs_dir, processing_name, toa_name,
 
         for f in glob(join(p_dir,"scrunch_*.ar")):
             pat
+
+def prepare_toa_info(summary, match="pat"):
+    meta = summary["meta"]
+    observation = meta["observation"]
+    processing_name = meta["processing_name"]
+    template = meta["template_path"]
+    sf, = sorted(glob(join(observation,processing_name,"scrunch_*.ar")))
+
+    if match=="pat":
+        pat_output = subprocess.check_output(["pat",
+                                              "-s", template,
+                                              "-f", "tempo2 IPTA",
+                                              sf])
+    elif match=="mueller":
+        pat_output = subprocess.check_output(["python", "template_match.py",
+                                              "-t", template,
+                                              sf])
+    else:
+        raise ValueError("Invalid matching mode %s" % match)
+        
+    topo_toa = []
+    toa_info = []
+    for l in pat_output.split("\n"):
+        if not l or l.startswith("FORMAT"):
+            continue
+        ls = l.split()
+        mjd = float(ls[2])
+        #print mjd, l
+        topo_toa.append(mjd)
+        d = dict(mjd_string=ls[2],
+                 mjd=mjd,
+                 file=ls[0],
+                 freq=float(ls[1]),
+                 uncert=float(ls[3]),
+                 tel=ls[4],
+                 flags=dict())
+        for k, v in zip(ls[5::2],ls[6::2]):
+            if not k.startswith("-"):
+                raise ValueError("Mystery flag: %s %s" % (k,v))
+            d["flags"][k[1:]] = v
+        if (len(ls)-5) % 2:
+            raise ValueError("Apparently improper number of flags: %d in %s"
+                                 % (len(ls),ls))
+        toa_info.append(d)
+    topo_toa = np.array(topo_toa)
+    summary["topo_toa"] = topo_toa
+    summary["toa_info"] = toa_info
+    meta["ntoa"] = len(toa_info)
+    if len(toa_info)==0:
+        raise ProcessingError("No TOAs generated for %s" % observation)
+
+    with tempfile.TemporaryDirectory("triple") as td:
+        tim = join(td,"toas.tim")
+        with open(tim,"wt") as f:
+            f.write(pat_output)
+        par = par_db.get_par_for(meta["mjd"])
+        subprocess.check_call(["tempo", "-f", par, tim],
+                              cwd=td)
+        try:
+            resid2 = residuals.read_residuals(join(td,"resid2.tmp"))
+            meta["tempo_failed"] = False
+            meta["rms_residual"] = 1e6*np.std(resid2.prefit_sec)
+            meta["mean_residual_uncertainty"] = 1e6*np.mean(resid2.uncertainty)
+            mr = np.average(resid2.prefit_sec, weights=1/resid2.uncertainty)
+            meta["reduced_chi2"] = np.sqrt(np.mean(((resid2.prefit_sec-mr)
+                                                    /resid2.uncertainty)**2))
+            summary["prefit_sec"] = resid2.prefit_sec
+            summary["uncertainty"] = resid2.uncertainty
+            summary["bary_freq"] = resid2.bary_freq
+        except IOError as e:
+            meta["tempo_failed"] = True
+            meta["rms_residual"] = np.nan
+            meta["mean_residual_uncertainty"] = np.mean(
+                [t["uncert"] for t in toa_info])
+            meta["reduced_chi2"] = np.nan
+            summary["prefit_sec"] = np.zeros(len(toa_info))
+            summary["uncertainty"] = 1e-6*np.array(
+                [t["uncert"] for t in toa_info])
+            summary["bary_freq"] = np.array(
+                [t["freq"] for t in toa_info])
+
+def prepare_scrunched(summary):
+    meta = summary["meta"]
+    observation = meta["observation"]
+    processing_name = meta["processing_name"]
+    template = meta["template_path"]
+    toa_info = summary["toa_info"]
+    p_dir = join(observation,processing_name)
+    summary["p_dir"] = p_dir
+    nb = meta["nbin"]
+    scrunched = sorted(glob(join(p_dir, "scrunch_*.ar")))
+
+    T = psrchive.Archive_load(template)
+    T.dedisperse()
+    T.pscrunch()
+    T.remove_baseline()
+    t_values = convert_template(T.get_data()[0,0,0,:], meta["nbin"])
+    t_phases = np.linspace(0,1,len(t_values),endpoint=False)
+
+    snr_sum = 0
+    snr_weight = 0
+    snr_data = []
+
+    min_f = meta["centre_frequency"]-meta["bw"]/2
+    max_f = meta["centre_frequency"]+meta["bw"]/2
+    if min_f>max_f:
+        min_f, max_f = max_f, min_f
+    summary["min_f"] = min_f
+    summary["max_f"] = max_f
+
+    for s in scrunched:
+        F = psrchive.Archive_load(s)
+        F.pscrunch()
+        F.dedisperse()
+        F.remove_baseline()
+        # subint, chan, bin
+        d = F.get_data()[:,0,:,:]
+        w = F.get_weights()
+        ns, nc, nb = d.shape
+        snrs = np.ma.zeros((ns,nc))
+        toa_by_index = {}
+        subix = []
+        for i in range(len(F)):
+            I = F.get_Integration(i)
+            subix.append(I.get_start_time().in_days())
+        subix.append(I.get_end_time().in_days())
+        subix = np.array(subix)
+        chix = np.linspace(min_f, max_f, nc+1)
+        for t in toa_info:
+            if "chan" in t["flags"]:
+                j = int(t["flags"]["chan"])
+            else:
+                j = np.searchsorted(chix,t["freq"])-1
+            if "subint" in t["flags"]:
+                i = int(t["flags"]["subint"])
+            else:
+                i = np.searchsorted(subix,t["mjd"])-1
+            if meta["bw"] < 0:
+                j = nc-1-j
+            #print(t["mjd"], t["freq"], i, j, min_f, max_f)
+            if (i,j) in toa_by_index:
+                raise ProcessingError("Problem matching TOAs with "
+                                      "subintegrations for %s: (%d,%d duplicated)" 
+                                      % (t,i,j))
+            toa_by_index[i,j] = t
+        for i in range(ns):
+            for j in range(nc):
+                if w[i,j] == 0:
+                    snrs[i,j] = np.ma.masked
+                    continue
+                prof_ = d[i,j]
+                phase, amp, bg = align_scale_profile(t_values, prof_)
+                t_fit = rotate_phase(t_values, phase)*amp + bg
+                snrs[i,j] = (np.sqrt(nb)
+                                *np.std(t_fit)/np.std(prof_-t_fit))
+                if (i,j) in toa_by_index:
+                    if "snr" not in toa_by_index[i,j]["flags"]:
+                        toa_by_index[i,j]["flags"]["snr"] = snrs[i,j]
+                else:
+                    raise ProcessingError("Missing TOA for unzapped "
+                                         "subint (%d,%d)" % (i,j))
+        ts = 0
+        te = (F.end_time()-F.start_time()).in_days()*86400
+        snr_data.append((ts,te,snrs))
+        snr_sum += snrs.sum()
+        snr_weight += snrs.count()
+    meta["average_snr"] = snr_sum/snr_weight
+    summary["snr_data"] = snr_data
+    summary["snr_sum"] = snr_sum
+    summary["snr_weight"] = snr_weight
+    summary["te"] = te
+    summary["t_values"] = t_values
+
+def prepare_unscrunched(summary):
+    meta = summary["meta"]
+    observation = meta["observation"]
+    processing_name = meta["processing_name"]
+    template = meta["template_path"]
+    p_dir = summary["p_dir"]
+    t_values = summary["t_values"]
+    nb = meta["nbin"]
+    unscrunched = sorted(glob(join(p_dir, "zap_*.ar")))
+
+    gtp_data = None
+    gtp_weight = None
+    prof_data = None
+    prof_weight = None
+    std_data = None
+    std_weight = None
+
+    yfp_data = []
+    yfp_start_end = []
+
+    smear_data = []
+
+    for (i,u) in enumerate(unscrunched):
+        F = psrchive.Archive_load(u)
+        F.convert_state('Stokes')
+        F.dedisperse()
+        F.remove_baseline()
+        # axes are (subint, polarization, channel, bin)
+        d = F.get_data()
+        # axes are (subint, channel)
+        w = F.get_weights()
+
+        sm = meta["smearing"][i].copy()
+        if "raw_smearing" in meta:
+            sm += meta["raw_smearing"][i]
+        sm_xs = np.linspace((F.start_time().in_days()-meta["tstart"])*86400,
+                            (F.end_time().in_days()-meta["tstart"])*86400,
+                            len(F)+1)[1:-1]
+        smear_data.append((sm_xs,sm))
+        if "max_smearing" not in meta:
+            meta["max_smearing"] = 0
+        meta["max_smearing"] = max(meta["max_smearing"],
+                                   np.amax(np.abs(sm))*1e6*meta["P"])
+
+        # Profile
+        sd, sw = np.ma.average(d, weights=w[:,None,:,None]+0*d,
+                                   axis=2, returned=True)
+        sd, sw = np.ma.average(sd, weights=sw, axis=0, returned=True)
+        if prof_data is None:
+            prof_data, prof_weights = sd, sw
+        else:
+            prof_data = (prof_data*prof_weights+sd*sw)/(prof_weights+sw)
+            prof_weights += sw
+
+        # Noise std. dev per bin (pre-averaging)
+        sd = np.std(d[:,0,:,:], axis=-1)
+        sd, sw = np.ma.average(sd,weights=w,returned=True)
+        if std_data is None:
+            std_data, std_weight = sd, sw
+        else:
+            std_data = (std_data*std_weight+sd*sw)/(std_weight+sw)
+            std_weight += sw
+
+        # GTp plot
+        sd, sw = np.ma.average(d[:,0], weights=w[...,None]+0*d[:,0],
+                                   axis=0, returned=True)
+        if gtp_data is None:
+            gtp_data, gtp_weights = sd, sw
+        else:
+            gtp_data = (gtp_data*gtp_weights+sd*sw)/(gtp_weights+sw)
+            gtp_weights += sw
+
+        # YFp plot
+        yd, yw = np.ma.average(d[:,0], weights=w[...,None]+0*d[:,0],
+                                   axis=1, returned=True)
+        yd = np.ma.array(yd)
+        yd[yw==0] = np.ma.masked
+        b = (F.start_time().in_days()-meta["tstart"])*86400
+        e = (F.end_time().in_days()-meta["tstart"])*86400
+        yfp_data.append(yd)
+        yfp_start_end.append((b,e))
+    gtp_data = np.ma.array(gtp_data)
+    gtp_data[gtp_weights==0] = np.ma.masked
+
+    if np.sum(prof_weights)==0:
+        raise ProcessingError("All data appears to have been zapped")
+    phase, amp, bg = align_scale_profile(t_values, prof_data[0])
+    t_fit = rotate_phase(t_values, phase)*amp + bg
+    osnr = float(np.sqrt(nb)*np.std(t_fit)/np.std(prof_data[0]-t_fit))
+    if np.isnan(osnr):
+        raise ProcessingError("Problem with SNR computation; profile is prof_data, prof_weights")
+    meta["overall_snr"] = osnr
+    summary["gtp_data"] = gtp_data
+    summary["gtp_weights"] = gtp_weights
+    summary["yfp_data"] = yfp_data
+    summary["yfp_start_end"] = yfp_start_end
+    summary["smear_data"] = smear_data
+    summary["prof_data"] = prof_data
+    summary["prof_weights"] = prof_weights
+    summary["t_fit"] = t_fit
+
+def plot_summary(summary):
+    import matplotlib.pyplot as plt
+    min_f = summary["min_f"]
+    max_f = summary["max_f"]
+    yfp_data = summary["yfp_data"]
+    gtp_data = summary["gtp_data"]
+    topo_toa = summary["topo_toa"]
+    smear_data = summary["smear_data"]
+    p_dir = summary["p_dir"]
+    uncertainty = summary["uncertainty"]
+    snr_sum = summary["snr_sum"]
+    snr_data = summary["snr_data"]
+    toa_info = summary["toa_info"]
+    snr_weight = summary["snr_weight"]
+    text_format = summary["text_format"]
+    meta = summary["meta"]
+    bary_freq = summary["bary_freq"]
+    te = summary["te"]
+    prefit_sec = summary["prefit_sec"]
+    yfp_start_end = summary["yfp_start_end"]
+    prof_data = summary["prof_data"]
+    prof_weights = summary["prof_weights"]
+    t_fit = summary["t_fit"]
+
+    fig = plt.figure()
+    fig.set_size_inches(10,8)
+
+    lm = 0.085
+    prof = plt.axes((lm,0.70,0.4,0.25))
+    resid = plt.axes((lm,0.55,0.4,0.15))
+    gtp = plt.axes((lm,0.30,0.4,0.25))
+    yfp = plt.axes((lm,0.05,0.4,0.25))
+    text_x, text_y = 0.50, 0.95
+
+    cbar = plt.axes((0.80,0.70,0.15,0.03))
+    snr = plt.axes((0.55,0.55,0.4,0.15))
+    smear = plt.axes((0.55,0.40,0.4,0.15))
+    resid_t = plt.axes((0.55,0.25,0.4,0.15))
+    resid_f = plt.axes((0.55,0.05,0.4,0.15))
+
+    tend = (meta["tend"]-meta["tstart"])*86400
+
+    rcolor = "black"
+    if meta["tempo_failed"]:
+        rcolor = "gray"
+    plt.sca(resid_t)
+    plt.errorbar((topo_toa-meta["tstart"])*86400,
+        1e6*prefit_sec,
+        1e6*uncertainty,
+        linestyle="none", fmt="k.", color=rcolor)
+    plt.xlabel("t (s)")
+    plt.ylabel("Residual ($\mu$s)")
+
+    plt.sca(resid_f)
+    plt.errorbar(bary_freq,
+        1e6*prefit_sec,
+        1e6*uncertainty,
+        linestyle="none", fmt="k.", color=rcolor)
+    plt.xlabel("f (MHz)")
+    plt.ylabel("Residual ($\mu$s)")
+
+    plt.sca(snr)
+    for ts, te, snrs in snr_data:
+        if meta["bw"]>0:
+            snrs = snrs[:,::-1]
+        plt.imshow(snrs.T, extent=(ts, te, min_f, max_f),
+              interpolation='nearest')
+    snr.set_aspect('auto')
+    plt.ylabel("f (MHz)")
+    plt.sca(resid_t)
+    plt.xlim(0,tend)
+    plt.sca(snr)
+    plt.tick_params(axis='x', labelbottom='off')
+    plt.xlim(0,tend)
+    cb = plt.colorbar(cax=cbar, orientation='horizontal', label="S/N")
+    cb.ax.xaxis.set_ticks_position('top')
+    cb.ax.xaxis.set_label_position('top')
+    plt.sca(smear)
+    plt.tick_params(axis='x', labelbottom='off')
+    plt.xlim(0,tend)
+    plt.ylabel("Smearing ($\mu$s)")
+
+    plt.sca(yfp)
+    #for (yd, (b,e)) in zip(yfp_data, yfp_start_end):
+    #    plt.imshow(yd[::-1,:],extent=(0,1,b,e),
+    #          interpolation='none')
+    yd = np.ma.concatenate(yfp_data)
+    b = yfp_start_end[0][0]
+    e = yfp_start_end[-1][1]
+    n, x = np.percentile(np.ma.compressed(yd),[1,99])
+    plt.imshow(yd[::-1,:],extent=(0,1,b,e),
+               vmin=n, vmax=x,
+          interpolation='none')
+
+    plt.sca(smear)
+    for (sm_xs, sm) in smear_data:
+        plt.plot(sm_xs, sm*1e6*meta["P"], color='k')
+
+    plt.sca(prof)
+    ps = np.linspace(0,1,prof_data.shape[1],endpoint=False)
+    plt.plot(ps,prof_data[0,:], color='black')
+    plt.plot(ps,prof_data[3,:], color='blue')
+    plt.plot(ps,np.hypot(prof_data[1,:],prof_data[2,:]), color='red')
+    plt.plot(ps, t_fit, color='green')
+    plt.tick_params(axis='x', labelbottom='off')
+    plt.ylabel("Flux density (mJy?)")
+    p_x = ps[np.argmax(t_fit)]
+    vline_alpha = 0.5
+    vline_color = 'purple'
+    plt.axvline(p_x, color=vline_color, alpha=vline_alpha)
+    plt.xlim(0,1)
+
+    plt.sca(resid)
+    plt.plot(ps,prof_data[0,:]-t_fit, color='black')
+    plt.ylabel(r"$\Delta$Flux")
+    plt.tick_params(axis='x', labelbottom='off')
+    plt.axvline(p_x, color=vline_color, alpha=vline_alpha)
+    plt.xlim(0,1)
+
+    plt.sca(gtp)
+    if meta["bw"]<0:
+        gtp_data_display = gtp_data[::-1,:]
+    else:
+        gtp_data_display = gtp_data
+    n, x = np.percentile(np.ma.compressed(gtp_data),[1,99])
+    plt.imshow(gtp_data_display[::-1,:], extent=(0,1,min_f,max_f),
+               vmin=n, vmax=x,
+              interpolation='none')
+    gtp.set_aspect("auto")
+    plt.ylabel("freq (MHz)")
+    plt.tick_params(axis='x', labelbottom='off')
+    plt.axvline(p_x, color=vline_color, alpha=vline_alpha)
+    plt.xlim(0,1)
+
+    plt.sca(yfp)
+    yfp.set_aspect("auto")
+    plt.xlabel("pulse phase")
+    plt.ylabel("time (s)")
+    plt.axvline(p_x, color=vline_color, alpha=vline_alpha)
+    plt.xlim(0,1)
+    plt.ylim(0,(meta["tend"]-meta["tstart"])*86400)
+
+    plt.sca(resid_f)
+    plt.xlim(min_f, max_f)
+
+    text = text_format.format(**meta)
+
+    plt.text(text_x, text_y, text,
+             horizontalalignment="left", verticalalignment="top",
+             transform=fig.transFigure)
+
+    plt.viridis()
+
+
+def make_toas(observation, processing_name, toa_name, template,
+              summary_plot=True, match="pat"):
+    # FIXME: take advantage of extra information available from mueller matrix fitting
+    with open(join(observation,processing_name,"process.pickle"),"rb") as f:
+        meta = pickle.load(f)
+    summary = dict(meta=meta)
+    meta["observation"] = observation
+    meta["processing_name"] = processing_name
+    meta["template"] = os.path.basename(template)
+    meta["template_path"] = template
+    meta["toa_name"] = toa_name
+    text_format = """PSR J0337+1715 observation {name}
+    Observed: {tel} {receiver} Processing: {processing_name}
+    Template: {template} TOAs: {toa_name}
+    Center frequency: {centre_frequency:.1f} MHz
+    Length: {length:.1f} s Bandwidth: {bw:.1f} MHz
+    Maximum smearing: {max_smearing:.2f} $\mu$s
+    Signal-to-noise ratio overall: {overall_snr:.1f} Average: {average_snr:.1f}
+    RMS residual: {rms_residual:.2f} $\mu$s # TOAs: {ntoa}
+    Mean residual uncertainty: {mean_residual_uncertainty:.2f} $\mu$s
+    Residual reduced $\chi^2$: {reduced_chi2:.2f}
+    """
+    summary["text_format"] = text_format
+    prepare_toa_info(summary, match=match)
+    prepare_scrunched(summary)
+    p_dir = summary["p_dir"]
+    toa_info = summary["toa_info"]
+    prepare_unscrunched(summary)
+    meta["summary"] = text_format.format(**meta)
+    tdir = join(p_dir,meta["toa_name"])
+    if not os.path.exists(tdir):
+        os.makedirs(tdir)
+    with open(join(tdir,"toas.tim"),"wt") as of:
+        of.write("FORMAT 1\n")
+        for t in toa_info:
+            if "nch" in t["flags"]:
+                del t["flags"]["nch"]
+            for f in ["processing_name", "max_smearing",
+                          "band", "tel", "toa_name"]:
+                t["flags"][f] = meta[f]
+
+            flagpart = " ".join("-"+k+" "+str(v) for k,v in t["flags"].items())
+            t["flagpart"] = flagpart
+            l = ("{file} {freq} {mjd_string} {uncert} {tel} "
+                     "{flagpart}").format(**t)
+            of.write(l)
+            of.write("\n")
+    with open(join(tdir,"toas.pickle"),"wt") as of:
+        meta["toas"] = toa_info
+        pickle.dump(meta, of)
+    with open(join(tdir,"summary.pickle"),"wt") as of:
+        pickle.dump(summary, of)
+    if summary_plot:
+        import matplotlib.pyplot as plt
+        plot_summary(summary)
+        plt.savefig(join(tdir,"summary.pdf"))
