@@ -25,8 +25,10 @@ logger = logging.getLogger()
 
 if True:
     logger.setLevel(logging.DEBUG)
-    fh = logging.FileHandler(os.path.join(dbdir,"rank-%s.log" % os.environ['OMPI_COMM_WORLD_RANK']))
-    formatter = logging.Formatter('%(asctime)s - %(module)s:%(funcName)s:%(lineno)s - %(message)s')
+    fh = logging.FileHandler(os.path.join(
+        dbdir,"rank-%s.log" % os.environ['OMPI_COMM_WORLD_RANK']))
+    formatter = logging.Formatter(
+        '%(asctime)s - %(module)s:%(funcName)s:%(lineno)s - %(message)s')
     fh.setFormatter(formatter)
     logger.addHandler(fh)
 
@@ -166,7 +168,8 @@ try:
         logger.info("only one temperature so removing temperature axis")
         p0 = p0[0]
     if p0.shape[-1]!=len(F.parameters):
-        raise ValueError("Parameter mismatch between walker (%dd) and Fitter (%dd)" % (p0.shape[-1],len(F.parameters)))
+        raise ValueError("Parameter mismatch between "
+            "walker (%dd) and Fitter (%dd)" % (p0.shape[-1],len(F.parameters)))
 
     if len(p0.shape)==2:
         logger.info("using EnsembleSampler (warning: untested)")

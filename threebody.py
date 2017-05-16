@@ -22,6 +22,7 @@ import quad_integrate
 if True:
     logger = logging.getLogger(__name__)
     debug = logger.debug
+    error = logger.error
 else:
     def debug(s):
         pass
@@ -86,7 +87,7 @@ def load_toas(timfile = '0337+17.tim',
         if t2outfile:
             with open(t2outfile,"wt") as f:
                 f.write(o)
-                
+
     t2_bats = []
     freqs = []
     errs = []
@@ -112,7 +113,7 @@ def load_toas(timfile = '0337+17.tim',
     for l in open(timfile).readlines():
         if l.split():
             telcode = l.split()[0]
-            if telcode in ["i", "1", "3", "f", "@"]:
+            if telcode in ["i", "j", "1", "3", "f", "@"]:
                 telcodes.append(telcode)
     if len(telcodes)!=len(t2_bats):
         raise ValueError("Confusing tim file %s: list of %d telescope codes doesn't match list of %d BATs" % (timfile,len(telcodes),len(t2_bats)))
@@ -144,7 +145,7 @@ def load_toas(timfile = '0337+17.tim',
         return tel
     def pick_tel_code(f,c):
         tel = None
-        if c=='i':
+        if c=='i' or c=='j':
             if 1200<f<1500:
                 tel = 'WSRT1400'
         elif c=='1':
@@ -169,7 +170,7 @@ def load_toas(timfile = '0337+17.tim',
             print "WARNING: unable to determine telescope for frequency '%s' and code '%s'" % (f,c)
             tel = 'mystery'
         return tel
-            
+
     for f,c in zip(freqs,telcodes):
         tel = pick_tel_code(f,c)
         if tel not in tel_list:
@@ -347,7 +348,8 @@ def compute_orbit(parameter_dict, times, keep_states=True):
     time_reciprocal = parameter_dict.get('time_reciprocal',False)
     matrix_mode = parameter_dict.get('matrix_mode',0)
     debug("PPN mode is %s" % ppn_mode)
-    debug("Running compute_orbit from time %s to %s with tol %s" % (times[0],times[-1],tol))
+    debug("Running compute_orbit from time %s to %s with tol %s"
+              % (times[0],times[-1],tol))
 
     try:
         debug("Constructing initial conditions")
@@ -392,7 +394,8 @@ def compute_orbit(parameter_dict, times, keep_states=True):
         delta = parameter_dict['delta'] # M(G) = (1+delta) M(I)
         dgamma = parameter_dict['dgamma']
         dbeta = parameter_dict['dbeta']
-        dmbeta = parameter_dict['dmbeta'] #FIXME: all these three-body terms suck
+        #FIXME: all these three-body terms suck
+        dmbeta = parameter_dict['dmbeta']
         dmpbeta = parameter_dict['dmpbeta']
         dlambda = parameter_dict['dlambda']
         mgammafac = (1+dgamma-delta)/(1+dgamma)
@@ -567,7 +570,8 @@ def load_best_parameter_database():
        return pickle.load(f)
 def save_best_parameter_database(bpd):
     os.rename("best-parameter-database.pickle",
-              "best-parameter-database.pickle.%s~" % time.strftime("%Y-%m-%d-%H:%M:%S"))
+              "best-parameter-database.pickle.%s~"
+                  % time.strftime("%Y-%m-%d-%H:%M:%S"))
     with open("best-parameter-database.pickle","wb") as f:
         return pickle.dump(bpd,f)
 
@@ -595,7 +599,7 @@ multinest_prior=dict(
     j_GBT1500=('range',(-1e-3,1e-3)),
     j_NCY1400=('range',(-1e-3,1e-3)),
     )
-    
+
 class Fitter(object):
     """Object representing a data set and model
 
@@ -637,7 +641,8 @@ class Fitter(object):
         if k in bpd:
             self.best_parameters = bpd[k]
         else:
-            logger.warn("best_parameters not found on disk")
+            logger.warn("best_parameters not found on disk (%d available)"
+                            % len(bpd))
             self.best_parameters = dict(f0=365.95336878765363162,
                                         dbeta=0,dgamma=0)
 
@@ -659,7 +664,7 @@ class Fitter(object):
         self.t2_astrometry = t2_astrometry
         self.kopeikin = kopeikin
         self.linear_jumps = linear_jumps
-        
+
         self.files = files
         try:
             V = astropy.table.Table.read(files)
@@ -683,13 +688,13 @@ class Fitter(object):
                                   for i in range(len(V))])
             ix = np.argsort(self.mjds)
             self.ix = ix
-            
+
             self.btoas = self.btoas[ix]
             self.mjds = self.mjds[ix]
             self.pulses = self.pulses[ix]
             self.uncerts = self.uncerts[ix]
             self.tels = self.tels[ix]
-            
+
         elif files is not None:
             if self.parfile == "0337_bogus.par":
                 outname = files+".out"
@@ -910,12 +915,14 @@ class Fitter(object):
         debug("Started compute_orbit for %s" % repr(p))
         if p!=self.last_p:
             debug("compute_orbit cache miss, running calculation")
-            jumps = np.dot(self.jmatrix,np.array([p.get(n,0) for n in self.jnames]))
+            jumps = np.dot(self.jmatrix,
+                               np.array([p.get(n,0) for n in self.jnames]))
             debug("Calling compute_orbit")
             o = compute_orbit(p,
                     (self.mjds)-(jumps/86400.).astype(np.float128),
                     keep_states=True)
-            debug("Back from compute_orbit after time %s (%d evaluations)" % (o['time'],o['n_evaluations']))
+            debug("Back from compute_orbit after time %s (%d evaluations)"
+                      % (o['time'],o['n_evaluations']))
             self.last_p = p
             self.last_orbit = o
         else:
@@ -973,7 +980,7 @@ class Fitter(object):
                   (t_psr_s/t_psr_s[-1]), (t_psr_s/t_psr_s[-1])**2]
             if linear_jumps:
                 for i in range(1,len(self.tel_list)):
-                    At.append(self.tels==i) 
+                    At.append(self.tels==i)
             A = np.array(At).T
             for i in range(3):
                 debug("Linear least-squares iteration %d" % i)
@@ -981,12 +988,14 @@ class Fitter(object):
                     A/self.phase_uncerts[:,None],
                     b/self.phase_uncerts)
                 if not np.all(np.isfinite(x)):
-                    sys.stderr.write("Warning: illegal value appeared in least-squares fitting: %s" % x)
+                    error("Warning: illegal value appeared "
+                              "in least-squares fitting: %s" % x)
                     break
                 b -= np.dot(A,x)
                 debug("A[0]: %s b[0]: %s" % (A[0],b[0]))
                 debug("x: %s" % x)
-                debug("Linear least-squares residual RMS %g" % np.sqrt(np.mean(b**2)))
+                debug("Linear least-squares residual RMS %g"
+                          % np.sqrt(np.mean(b**2)))
             debug("Done linear least-squares")
             if marginalize:
                 As = A/self.phase_uncerts[:,None]
@@ -994,8 +1003,8 @@ class Fitter(object):
                 return -b, 0.5*m
             else:
                 return -b
-    def compute_linear_parts(self, p=None, linear_jumps=None, t_psr=None):
-        debug("Computing linear parts")
+    def compute_linear_matrix(self, p=None, linear_jumps=None, t_psr=None):
+        debug("Computing linear matrix")
         if linear_jumps is None:
             linear_jumps = self.linear_jumps
         if p is None:
@@ -1004,15 +1013,25 @@ class Fitter(object):
             o = self.compute_orbit(p)
             t_psr = o['t_psr']
         t_psr_s = t_psr*86400.
-        At = [np.ones(len(t_psr_s)), t_psr_s/t_psr_s[-1], 0.5*(t_psr_s/t_psr_s[-1])**2]
+        At = [np.ones(len(t_psr_s)),
+                  t_psr_s/t_psr_s[-1],
+                  0.5*(t_psr_s/t_psr_s[-1])**2]
+        lp = ['tzrmjd','f0','f1']
         if linear_jumps:
             tl2 = list(self.tel_list)[:]
             tl2.remove(self.tel_base)
             tel_index = np.array([self.tel_list.index(t) for t in tl2])
             for t in tel_index:
-                At.append(self.tels==t) 
-        b = self.pulses.copy()
+                At.append(self.tels==t)
+                lp.append("j_"+self.tel_list[t])
         A = np.array(At).T
+        assert len(lp)==A.shape[1]
+        return A, lp
+
+    def compute_linear_parts(self, p=None, linear_jumps=None, t_psr=None):
+        debug("Computing linear parts")
+        A, lp = self.compute_linear_matrix(p,linear_jumps,t_psr)
+        b = self.pulses.copy()
         r = np.zeros(A.shape[1],dtype=np.float128)
         for i in range(3):
             x, rk, res, s = scipy.linalg.lstsq(A/self.phase_uncerts[:,None],
@@ -1023,6 +1042,10 @@ class Fitter(object):
             debug("residual %f" % np.sum((b/self.phase_uncerts)**2))
             debug("residual RMS %f" % np.sqrt(np.mean(b**2)))
             r += x
+        if t_psr is None:
+            o = self.compute_orbit(p)
+            t_psr = o['t_psr']
+        t_psr_s = t_psr*86400.
         f0 = r[1]/t_psr_s[-1]
         f1 = r[2]/t_psr_s[-1]**2
         def err(tzrmjd_s):
@@ -1030,7 +1053,7 @@ class Fitter(object):
             phase -= f0*tzrmjd_s+f1*tzrmjd_s**2/2.
             if linear_jumps:
                 for i, t in enumerate(tel_index):
-                    phase += r[3+i]*(self.tels==t)                     
+                    phase += r[3+i]*(self.tels==t)
             rr = phase-self.pulses
             rr /= self.phase_uncerts
             return np.sum(rr**2)
@@ -1050,7 +1073,7 @@ class Fitter(object):
                 n = "j_"+self.tel_list[t]
                 d[n] = p.get(n,0)-r[3+i]/f0
         return d
-        
+
     def lnprob(self, p, marginalize=True):
         """Return the log-likelihood of the fit"""
         if marginalize:
@@ -1087,13 +1110,25 @@ class Fitter(object):
         return -l/2.
 
     def chi2(self, p):
-        return -2*self.efac**2*(self.lnprob(p, marginalize=False) + self.lnprior(p))
+        # FIXME: should lnprior be here?
+        return -2*self.efac**2*(self.lnprob(p, marginalize=False)
+                                    + self.lnprior(p))
+
+    def dof(self):
+        # FIXME: linear part?
+        return len(self.mjds) - len(self.parameters)
 
     def make_mfun(self):
         args = ", ".join(self.parameters)
-        argdict = "dict(" + ", ".join("%s=%s" % (p,p) for p in self.parameters) + ", **moredict)"
-        #lamstr = "lambda {args}: np.sum((self.residuals({argdict})/self.phase_uncerts)**2)".format(**locals())
-        lamstr = "lambda {args}: -2*self.efac**2*(self.lnprob({argdict}, marginalize=False)+self.lnprior({argdict}))".format(**locals())
+        argdict = ("dict("
+                       + ", ".join("%s=%s" % (p,p) for p in self.parameters)
+                       + ", **moredict)")
+        #lamstr = ("lambda {args}: "
+        #    "np.sum((self.residuals({argdict})/self.phase_uncerts)**2)"
+        #    .format(**locals())
+        lamstr = ("lambda {args}: -2*self.efac**2*(self.lnprob({argdict}, "
+                      "marginalize=False)+self.lnprior({argdict}))"
+                      .format(**locals()))
         #print lamstr
         #print locals()
         g = globals().copy()
@@ -1106,7 +1141,8 @@ class Fitter(object):
             use_quad = self.use_quad,
             shapiro = self.shapiro,
             tol = self.tol,
-            pm_x = self.best_parameters.get('pm_x',0), #FIXME: not fitting for pm_x
+            #FIXME: not fitting for pm_x
+            pm_x = self.best_parameters.get('pm_x',0),
             pm_y = self.best_parameters.get('pm_y',0),
             )
         return eval(lamstr, g)
@@ -1139,8 +1175,95 @@ class Fitter(object):
             p[n] += o*self.best_errors[n]
         return p
 
+class Model(object):
+
+    def __init__(self,
+            parfile="0337_bogus.par",
+            physics="GR",
+            tol=1e-16,
+            fit_pos=True,
+            fit_pm=False,
+            fit_px=False,
+            ddmx_points=(),
+            telescopes=('WSRT','GBT','AO'),
+            n_fd=0,
+            efac=1,
+            equad=0,
+            ecorr=0):
+        """Set up a Model object"""
+        # Save the creation arguments so they can be used to index
+        # a database of best-fit values
+        av = inspect.getargvalues(inspect.currentframe())
+        d = {a:av.locals[a] for a in av.args}
+        del d['self']
+        try:
+            d['ddmx_points'] = tuple(ddmx_points)
+        except ValueError:
+            # presumably not a list/array
+            pass
+        self.args = d
+
+        # FIXME: get approximate f0 from par file
+        self.approx_f0 = approx_f0
+
+        self.parfile = parfile
+        self.physics = physics
+        self.tol = tol
+        self.fit_pos = fit_pos
+        self.fit_pm = fit_pm
+        self.fit_px = fit_px
+        self.ddmx_points = ddmx_points
+        self.n_fd = n_fd
+        self.efac = efac
+        self.equad = equad
+        self.ecorr = ecorr
+        self.telescopes = telescopes
+        self.orbital_parameters = [
+            'asini_i', 'pb_i', 'eps1_i', 'eps2_i', 'tasc_i',
+            'acosi_i', 'q_i',
+            'asini_o', 'pb_o', 'eps1_o', 'eps2_o', 'tasc_o',
+            'acosi_o', 'delta_lan']
+        self.nonlinear_parameters = []
+        if physics=="heavysimple":
+            self.parameters.extend(['dgamma','dbeta','delta'])
+        elif physics=="newtondelta":
+            self.parameters.append(['delta'])
+
+        self.linear_parameters = ["phase_0", "f0", "f1"]
+
+        if self.fit_pos:
+            self.linear_parameters.extend(['d_RAJ','d_DECJ'])
+        if self.fit_pm:
+            self.linear_parameters.extend(['d_PMRA','d_PMDEC'])
+        if self.fit_px:
+            self.linear_parameters.append('d_PX')
+        for t in self.telescopes[1:]:
+            self.linear_parameters.append("j_%s" % t)
+        for (i,d) in enumerate(ddmx_points):
+            self.linear_parameters.append("DMX_%d" % i)
+        for i in range(n_fd):
+            self.linear_parameters.append("FD_%d" % i)
+
+
+class DataSet(object):
+
+    def __init__(self, toas, parfile="0337_bogus.par"):
+        pass
+
+class Problem(object):
+
+    def __init__(self, model, dataset):
+        self.model = model
+        self.dataset = dataset
+        self.linear_matrix = np.zeros((len(self.model.linear_parameters),
+                                       len(self.dataset)))
+        self.last_orbit = None
+        self.last_orbit_parameters = None
+
+    def compute_orbit(self, parameters):
+        pass
+
 
 def console_print(s):
     from IPython.utils.io import raw_print
     raw_print(s)
-
