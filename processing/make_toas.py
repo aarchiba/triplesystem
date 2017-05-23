@@ -77,6 +77,7 @@ def generate(observation, processing_name, toa_name):
                 "No TOA spec for %s in %s" % (k, toa_name))
         kwargs.update(spec[k])
         pipe.make_toas(observation, processing_name, toa_name, **kwargs)
+	plt.close('all')
 
 def generate_specific(observation):
     print observation, processing_name, toa_name

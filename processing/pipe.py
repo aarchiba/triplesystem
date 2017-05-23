@@ -1169,12 +1169,12 @@ def prepare_scrunched(summary):
                 j = int(t["flags"]["chan"])
             else:
                 j = np.searchsorted(chix,t["freq"])-1
+                if meta["bw"] < 0:
+                    j = nc-1-j
             if "subint" in t["flags"]:
                 i = int(t["flags"]["subint"])
             else:
                 i = np.searchsorted(subix,t["mjd"])-1
-            if meta["bw"] < 0:
-                j = nc-1-j
             #print(t["mjd"], t["freq"], i, j, min_f, max_f)
             if (i,j) in toa_by_index:
                 raise ProcessingError("Problem matching TOAs with "
@@ -1250,8 +1250,11 @@ def prepare_unscrunched(summary):
         smear_data.append((sm_xs,sm))
         if "max_smearing" not in meta:
             meta["max_smearing"] = 0
-        meta["max_smearing"] = max(meta["max_smearing"],
-                                   np.amax(np.abs(sm))*1e6*meta["P"])
+        try:
+            meta["max_smearing"] = max(meta["max_smearing"],
+                                       np.amax(np.abs(sm))*1e6*meta["P"])
+        except ValueError:
+            error("Strange problem computing max_smearing; sm is %s", sm)
 
         # Profile
         sd, sw = np.ma.average(d, weights=w[:,None,:,None]+0*d,
