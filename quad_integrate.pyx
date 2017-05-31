@@ -1,8 +1,8 @@
 # distutils: language = c++
 # distutils: include_dirs = include
 # distutils: libraries = quadmath
-# distutils: depends = extra.hpp quad_defs.hpp ppn.hpp
-# distutils: extra_compile_args = -march=native
+# distutils: depends = extra.hpp ppn.hpp
+# distutils: extra_compile_args = -march=native -Wno-misleading-indentation -Wno-deprecated-declarations -Wno-unused-local-typedefs -Wno-address -Wno-ignored-attributes -Wno-unused-function 
 
 import sys
 
@@ -102,6 +102,10 @@ cdef extern from "boost/numeric/odeint.hpp" namespace "boost::numeric::odeint":
     pass
 
 
+cdef longdouble getl(vectl v, i):
+     return v[i]
+cdef quad getq(vectq v, i):
+     return v[i]
 
 cdef vectq* array_to_vectq(np.ndarray[DTYPE_t, ndim=1] x) except NULL:
     cdef vectq* v = new vectq()
@@ -126,6 +130,7 @@ cdef np.ndarray[DTYPE_t, ndim=1] vectl_to_array(vectl* v):
     for i in range(v.size()):
         x[i] = v.at(i)
     return x
+
 
 # FIXME: these suck.
 @cython.boundscheck(False)
@@ -233,9 +238,9 @@ cdef class ODEDelay:
         cdef longdouble d
         d = 0
         if self.roemer:
-            d += x.at(2)/86400.
-            d += t_d*self._krhs.pm_x*x.at(0)/86400.
-            d += t_d*self._krhs.pm_y*x.at(1)/86400.
+            d += getl(x,2)/86400.
+            d += t_d*self._krhs.pm_x*getl(x,0)/86400.
+            d += t_d*self._krhs.pm_y*getl(x,1)/86400.
         if self.shapiro:
             d += shapiro_delay(x,self._krhs.gamma)
         return d
@@ -243,9 +248,9 @@ cdef class ODEDelay:
         cdef quad d
         d = 0
         if self.roemer:
-            d += x.at(2)/86400.
-            d += t_d*self._krhs_q.pm_x*x.at(0)/86400.
-            d += t_d*self._krhs_q.pm_y*x.at(1)/86400.
+            d += getq(x,2)/86400.
+            d += t_d*self._krhs_q.pm_x*getq(x,0)/86400.
+            d += t_d*self._krhs_q.pm_y*getq(x,1)/86400.
         if self.shapiro:
             d += shapiro_delay(x,self._krhs_q.gamma)
         return d
@@ -375,9 +380,9 @@ cdef class ODEDelay:
             self._t_psr_q = temp_t_d_q
             if self._x_q[0].size()>21: # if any time dilation
                 if self._krhs_q.time_reciprocal:
-                    self._t_psr_q -= self._x_q[0].at(21) # FIXME: is this sign right?
+                    self._t_psr_q -= getq(self._x_q[0],21) # FIXME: is this sign right?
                 else:
-                    self._t_psr_q -= self._x_q[0].at(21) # FIXME: is this sign right?
+                    self._t_psr_q -= getq(self._x_q[0],21) # FIXME: is this sign right?
         else:
             _t_bb = py_to_longdouble(t_bb)
             before_t_d = self._stepper.previous_time()
@@ -451,9 +456,9 @@ cdef class ODEDelay:
             self._t_psr = temp_t_d
             if self._x[0].size()>21: # if any time dilation
                 if self._krhs.time_reciprocal:
-                    self._t_psr -= self._x[0].at(21) # FIXME: is this sign right?
+                    self._t_psr -= getl(self._x[0],21) # FIXME: is this sign right?
                 else:
-                    self._t_psr += self._x[0].at(21) # FIXME: is this sign right?
+                    self._t_psr += getl(self._x[0],21) # FIXME: is this sign right?
 
     def __dealloc__(self):
         del self._x
@@ -568,10 +573,15 @@ cdef class KeplerRHS(RHS):
             py_to_longdouble(pm_x), py_to_longdouble(pm_y),
             time_reciprocal)
     cdef int _evaluate(self, vectq*x, vectq*dxdt, quad t) except -1:
-        self._krhs.evaluate(x, dxdt, t)
+        self._krhs.evaluate(<vector[quad]*>x, <vector[quad]*>dxdt, t)
     def __dealloc__(self):
         del self._krhs
         del self._krhs_l
     property n_evaluations:
         def __get__(self):
             return self._evals
+
+
+# Local Variables:
+# compile-command: "python setup.py build_ext"
+# End:

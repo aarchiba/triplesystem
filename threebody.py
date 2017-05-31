@@ -34,6 +34,43 @@ def mjd_fromstring(s, base_mjd=0):
     f = np.float128("0."+f)
     return i+f
 
+def read_t2_toas(fname):
+    toa_info = []
+    for l in open(fname).readlines():
+        if not l or l.startswith("FORMAT"):
+            continue
+        ls = l.split()
+        mjd = float(ls[2])
+
+        d = dict(mjd_string=ls[2],
+                 mjd=mjd,
+                 file=ls[0],
+                 freq=float(ls[1]),
+                 uncert=float(ls[3]),
+                 tel=ls[4],
+                 flags=dict())
+        for k, v in zip(ls[5::2],ls[6::2]):
+            if not k.startswith("-"):
+                raise ValueError("Mystery flag: %s %s" % (k,v))
+            d["flags"][k[1:]] = v
+        if (len(ls)-5) % 2:
+            raise ValueError("Apparently improper number of flags: %d in %s"
+                                 % (len(ls),ls))
+        toa_info.append(d)
+    return toa_info
+
+def write_t2_toas(fname, toa_info):
+    with open(fname,"wt") as F:
+        F.write("FORMAT 1\n")
+        for toa_info in toa_infos:
+            flagpart = " ".join("-"+k+" "+str(v) for k,v in t["flags"].items())
+            t["flagpart"] = flagpart
+            l = ("{file} {freq} {mjd_string} {uncert} {tel} "
+                 "{flagpart}").format(**t)
+            F.write(l)
+            F.write("\n")
+
+
 abbreviate_infos = {
     'Arecibo,L-band,PUPPI_coherent_fold': 'AO1440',
     'GBT,L-band,GUPPI_coherent_fold': 'GBT1500',
@@ -190,6 +227,105 @@ def load_toas(timfile = '0337+17.tim',
         return t2_bats[ix], None, tel_list, tels[ix], errs[ix], derivs, ix
     else:
         return t2_bats[ix], pulses[ix], tel_list, tels[ix], errs[ix], derivs, ix
+
+def load_pipeline_toas(timfile,
+              parfile = '0337_bogus.par',
+              tempo2_program = 'tempo2',
+              tempo2_dir = os.environ['TEMPO2'],
+              t2outfile = None,
+              base_mjd = None):
+    """Load and barycenter pulse-numbered TOAs
+
+    This function loads in TOAs from a .tim file, uses a .par file
+    to apply the barycentric correction (Earth position and DM), and
+    returns the TOAs and the pulse numbers that go with them. The
+    output of tempo2 is cached and re-used if available, so if the
+    input file is changed the output file should be deleted or its
+    name should be changed.
+    """
+    if base_mjd is None:
+        base_mjd = 0
+
+    toa_info = read_t2_toas(timfile)
+
+    try:
+        if t2outfile is None:
+            t2outfile = ""
+        o = open(t2outfile).read()
+    except IOError:
+        import subprocess, os
+        e = os.environ.copy()
+        e['TEMPO2'] = tempo2_dir
+        outline = "OUTPUT {bat} {freq} {err} {%s}\n"%("} {".join(astro_names))
+        o = subprocess.check_output([tempo2_program,
+            "-nobs", str(len(toa_info)+100),
+            "-npsr", "1",
+            "-output", "general2", "-s", outline,
+            "-f", parfile, timfile], env=e)
+        if t2outfile:
+            with open(t2outfile,"wt") as f:
+                f.write(o)
+
+    t2_bats = []
+    freqs = []
+    errs = []
+    derivs = {n:[] for n in astro_names}
+    for l in o.split("\n"):
+        if not l.startswith("OUTPUT"):
+            continue
+        try:
+            t2_bats.append(mjd_fromstring(l.split()[1], base_mjd))
+            freqs.append(float(l.split()[2]))
+            errs.append(float(l.split()[3]))
+            for n,w in zip(astro_names,l.split()[4:]):
+                derivs[n].append(np.float128(w))
+        except ValueError:
+            raise ValueError("Unable to decode line '%s'" % l)
+    t2_bats = np.array(t2_bats)
+    errs = np.array(errs)*1e-6 # convert to s
+    for n in astro_names:
+        derivs[n] = np.array(derivs[n])
+    if len(t2_bats) != len(toa_info):
+        raise ValueError("tempo2 produced %d outputs but we found %d TOAs" % (len(t2_bats), len(toa_info)))
+    pulses = np.zeros(len(toa_info),dtype=np.int64)
+    for i,t in enumerate(toa_info):
+        if "pn" in t["flags"]:
+            pulses[i] = np.int64(t["flags"])
+    if np.any(pulses==0):
+        pulses = None
+    tel_list = []
+    telcode_dict = { 
+        ("WSRT",1400): "WSRT1400",
+        ("AO",1400): "AO1350",
+        ("GBT",1400): "GBT1500",
+        ("WSRT",350): "WSRT350",
+        ("AO",430): "AO430",
+    }
+    for t in toa_info:
+        k = t["flags"]["tel"], int(t["flags"]["band"])
+        telcode = telcode_dict[k]
+        if telcode not in tel_list:
+            tel_list.append(telcode)
+    tel_list.sort()
+
+    tels = []
+    for t in toa_info:
+        k = t["flags"]["tel"], int(t["flags"]["band"])
+        telcode = telcode_dict[k]
+        tels.append(tel_list.index(telcode))
+    tels = np.array(tels)
+
+    ix = np.argsort(t2_bats)
+    for n in astro_names:
+        if len(derivs[n])==0:
+            continue
+        derivs[n] = derivs[n][ix]
+    if pulses is None:
+        return t2_bats[ix], None, tel_list, tels[ix], errs[ix], derivs, ix
+    else:
+        return t2_bats[ix], pulses[ix], tel_list, tels[ix], errs[ix], derivs, ix
+
+
 
 def trend_matrix(mjds, tel_list, tels,
     const=True, P=True, Pdot=True, jumps=True,
@@ -620,7 +756,8 @@ class Fitter(object):
                  kopeikin=False,
                  shapiro=True,
                  linear_jumps=False,
-                 priors=()):
+                 priors=(),
+                 toa_mode=None):
         """Set up a Fitter object
 
         This loads a data set (see load_toas), optionally selects only
@@ -700,15 +837,25 @@ class Fitter(object):
                 outname = files+".out"
             else:
                 outname = files+"_"+self.parfile+".out"
-            (self.mjds, self.pulses,
-             self.tel_list, self.tels,
-             self.uncerts, self.derivs,
-             self.ix) = load_toas(
-                 timfile=files+".tim",
-                 pulses=files+".pulses",
-                 parfile=self.parfile,
-                 t2outfile=outname,
-                 base_mjd=self.base_mjd)
+            if toa_mode=="pipeline":
+                (self.mjds, self.pulses,
+                 self.tel_list, self.tels,
+                 self.uncerts, self.derivs,
+                 self.ix) = load_pipeline_toas(
+                     timfile=files+".tim",
+                     parfile=self.parfile,
+                     t2outfile=outname,
+                     base_mjd=self.base_mjd)
+            else:
+                (self.mjds, self.pulses,
+                 self.tel_list, self.tels,
+                 self.uncerts, self.derivs,
+                 self.ix) = load_toas(
+                     timfile=files+".tim",
+                     pulses=files+".pulses",
+                     parfile=self.parfile,
+                     t2outfile=outname,
+                     base_mjd=self.base_mjd)
         else:
             (self.mjds, self.pulses,
              self.tel_list, self.tels,
