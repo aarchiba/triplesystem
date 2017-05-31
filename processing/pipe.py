@@ -1168,18 +1168,20 @@ def prepare_toa_info(summary, match="pat", snr_plot_threshold=10.):
             assert len(topo_toa)==len(resid2.prefit_sec)
             summary["topo_toa"] = np.array(topo_toa)
         except IOError as e:
+            ti = [t for t in toa_info
+                  if "snr" not in t["flags"] or float(t["flags"]["snr"])>=snr_plot_threshold]
             meta["tempo_failed"] = True
             meta["rms_residual"] = np.nan
             meta["mean_residual_uncertainty"] = np.mean(
-                [t["uncert"] for t in toa_info])
+                [t["uncert"] for t in ti])
             meta["reduced_chi2"] = np.nan
-            summary["prefit_sec"] = np.zeros(len(toa_info))
+            summary["prefit_sec"] = np.zeros(len(ti))
             summary["uncertainty"] = 1e-6*np.array(
-                [t["uncert"] for t in toa_info])
+                [t["uncert"] for t in ti])
             summary["bary_freq"] = np.array(
-                [t["freq"] for t in toa_info])
+                [t["freq"] for t in ti])
             summary["topo_toa"] = np.array(
-                [t["mjd"] for t in toa_info])
+                [t["mjd"] for t in ti])
 
 
 def prepare_scrunched(summary):
@@ -1322,6 +1324,10 @@ def prepare_unscrunched(summary):
             error("Strange problem computing max_smearing; sm is %s", sm)
 
         # Profile
+        # FIXME: this accumulation interacts badly with masked arrays
+        # Specifically, if ever it becomes all masked, new nonzero weights won't
+        # fix the problem. The solution is to work with sums instead, and divide
+        # by the weights afterward.
         sd, sw = np.ma.average(d, weights=w[:,None,:,None]+0*d,
                                    axis=2, returned=True)
         sd, sw = np.ma.average(sd, weights=sw, axis=0, returned=True)
@@ -1363,11 +1369,13 @@ def prepare_unscrunched(summary):
 
     if np.sum(prof_weights)==0:
         raise ProcessingError("All data appears to have been zapped")
+    if prof_data.count()==0:
+        raise ProcessingError("The entire profile is masked but weights are nonzero")
     phase, amp, bg = align_scale_profile(t_values, prof_data[0])
     t_fit = rotate_phase(t_values, phase)*amp + bg
     osnr = float(np.sqrt(nb)*np.std(t_fit)/np.std(prof_data[0]-t_fit))
     if np.isnan(osnr):
-        raise ProcessingError("Problem with SNR computation; profile is prof_data, prof_weights")
+        raise ProcessingError("Problem with SNR computation; profile is %s, weights are %s" % (prof_data, prof_weights))
     meta["overall_snr"] = osnr
     summary["gtp_data"] = gtp_data
     summary["gtp_weights"] = gtp_weights
