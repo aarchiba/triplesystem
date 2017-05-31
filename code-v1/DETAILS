@@ -1,0 +1,13 @@
+How Scott generates the delay files:
+
+* Fit Marten's BTX model to the TOAs to get a good fit
+* Turn off fitting and compute pulse numbers
+* Turn off all orbits and, using pulse numbers, run tempo on the TOAs
+* From the resulting resids.tmp, save the barycentered TOA time, the residual, the uncertainty, and an inferred telescope ID to delays.txt
+
+In the no-orbit model, the phase at time T (in seconds) is (leaving aside PEPOCH and TZRMJD) F0*T+F1*T**2/2. This time T is a sort of pulsar proper time, though the BTX model removes the mean slowing effects of SR and GR. The delays are supposed to be the difference between this pulsar proper time and the pulse arrival time at (say) the binary barycenter. But: other effects can appear. If there are JUMPs between data subsets, these get added to the delays. If the pulsar period is wrong, a linear trend
+
+In order to get a meaningful fit, there are several things we need to do. 
+
+
+Let E_n be the event of the emission of the nth pulse. Let t_p be the pulsar proper time, so that F0*t_p(E_n)+F1*t_p(E_n)**2/2 = n. Let t_d be the dynamical timescale of the system, that is, the clock by which the Newtonian orbital mechanics evolve. Then t_d(E_n) = \
