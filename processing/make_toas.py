@@ -15,12 +15,8 @@ from concurrent.futures import ProcessPoolExecutor
 from backports import tempfile
 
 import matplotlib
-matplotlib.use('PDF')
-matplotlib.rcParams['savefig.dpi'] = 144
-matplotlib.rcParams["image.composite_image"]=False
 
 import numpy as np
-import matplotlib.pyplot as plt
 import scipy.optimize
 from numpy.fft import rfft, irfft, fft, ifft
 
@@ -30,40 +26,14 @@ import residuals
 import joblib
 import pipe
 
-plt.viridis()
-
-
-parser = argparse.ArgumentParser()
-parser.add_argument("processing_name", help="Name of a processing setup to use")
-parser.add_argument("toa_name", help="Name of a TOA-generating setup to use")
-parser.add_argument("--njobs",
-                    help="Number of parallel jobs to run (using joblib)",
-                    type=int,
-                    default=1)
-parser.add_argument("--trybad",
-                    help="Try to process observations marked 'knownbad'",
-                    action="store_true")
-parser.add_argument("--stop",
-                    help="Stop if an error occurs",
-                    action="store_true")
-args = parser.parse_args()
-
-
-processing_name = args.processing_name
-toa_name = args.toa_name
-
 processing_specs = pickle.load(open("processing_specs.pickle","rb"))
 toa_specs = pickle.load(open("toa_specs.pickle","rb"))
-
-processing_specs[processing_name]
-toa_specs[toa_name]
-
-print processing_name, toa_name
 
 class NoSpecError(pipe.ProcessingError):
     pass
 
 def generate(observation, processing_name, toa_name):
+    import matplotlib.pyplot as plt
     if not os.path.exists(join(observation, processing_name)):
         meta = pickle.load(open(join(observation,"meta.pickle"),"rb"))
         spec = processing_specs[processing_name]
@@ -87,7 +57,7 @@ def generate(observation, processing_name, toa_name):
         pipe.make_toas(observation, processing_name, toa_name, **kwargs)
 	plt.close('all')
 
-def generate_specific(observation, trybad=False, stop=False):
+def generate_specific(observation, processing_name, toa_name, trybad=False, stop=False):
     print observation, processing_name, toa_name
     kb = join(observation,"knownbad")
     if os.path.exists(kb):
@@ -103,12 +73,50 @@ def generate_specific(observation, trybad=False, stop=False):
             raise
         print e
 
-observations = sorted(glob("data/obs/*_*_*"))
+if __name__=='__main__':
+    matplotlib.use('PDF')
+    matplotlib.rcParams['savefig.dpi'] = 144
+    matplotlib.rcParams["image.composite_image"]=False
 
-if args.njobs==1:
-    for o in observations:
-        generate_specific(o, args.trybad, args.stop)
-else:
-    Parallel(n_jobs=args.njobs)(delayed(generate_specific)(o, args.trybad, args.stop)
-                                       for o in observations)
-print "All observations tried."
+    import matplotlib.pyplot as plt
+    plt.viridis()
+
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("processing_name", help="Name of a processing setup to use")
+    parser.add_argument("toa_name", help="Name of a TOA-generating setup to use")
+    parser.add_argument("--njobs",
+                        help="Number of parallel jobs to run (using joblib)",
+                        type=int,
+                        default=1)
+    parser.add_argument("--trybad",
+                        help="Try to process observations marked 'knownbad'",
+                        action="store_true")
+    parser.add_argument("--stop",
+                        help="Stop if an error occurs",
+                        action="store_true")
+    args = parser.parse_args()
+
+
+    processing_name = args.processing_name
+    toa_name = args.toa_name
+
+    if processing_name not in processing_specs:
+        raise ValueError("Unknown processing_name %s; possibilities are %s"
+                         % (processing_name, sorted(processing_specs.keys())))
+    if toa_name not in toa_specs:
+        raise ValueError("Unknown toa_name %s; possibilities are %s"
+                         % (toa_name, sorted(toa_specs.keys())))
+
+    print processing_name, toa_name
+
+    observations = sorted(glob("data/obs/*_*_*"))
+
+    if args.njobs==1:
+        for o in observations:
+            generate_specific(o, processing_name, toa_name, trybad=args.trybad, stop=args.stop)
+    else:
+        Parallel(n_jobs=args.njobs)(delayed(generate_specific)(o, processing_name, toa_name, 
+                                                               trybad=args.trybad, stop=args.stop)
+                                           for o in observations)
+    print "All observations tried."
