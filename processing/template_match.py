@@ -27,6 +27,7 @@ from __future__ import division, print_function
 import sys
 import logging
 from logging import debug, info
+import numbers
 
 import numpy as np
 import scipy.optimize
@@ -35,6 +36,9 @@ from numpy.fft import rfft, irfft, fft, ifft
 
 from astropy.io import fits
 import psrchive
+
+class TemplateMatchError(ValueError):
+    pass
 
 def rotate_phase(prof, phase):
     """Rotate phase of profile earlier"""
@@ -220,7 +224,7 @@ class MatchResult(object):
     """
     pass
 def align_profile_polarization(template, data, 
-                               global_search=True, 
+                               global_search="phase", 
                                noise="off-pulse",
                                off_pulse_fraction=0.25,
                                intensity_only=False,
@@ -253,7 +257,7 @@ def align_profile_polarization(template, data,
     if n != nd:
         template = np.array([convert_template(t, nd) for t in template])
         p, n = template.shape
-    if isinstance(global_search, float):
+    if isinstance(global_search, numbers.Number):
         phase = global_search
     elif global_search=='fourier':
         # scipy.linalg.lstsq allows solving for many RHS's at once
@@ -311,6 +315,9 @@ def align_profile_polarization(template, data,
     try:
         r = scipy.optimize.minimize_scalar(lambda p: qof(template, data, p), bracket=bracket)
     except ValueError as err:
+        if isinstance(global_search, numbers.Number):
+            raise TemplateMatchError("Provided initial guess not close enough to fit")
+        print(global_search)
         i = np.argmin(res)
         print(res[(i-1)%len(phases)], res[i], res[(i+1)%len(phases)])
         print(qof(template, data, bracket[0]), 
@@ -358,7 +365,7 @@ def align_profile_polarization(template, data,
     noises = res.std(axis=-1).filled(np.nan)
     result.noises = noises
 
-    if isinstance(noise, float):
+    if isinstance(noise, numbers.Number):
         result.noise_mode = "specified"
         noise_per_bin = noise
     elif noise=="off-pulse":
@@ -371,10 +378,10 @@ def align_profile_polarization(template, data,
     result.noise_per_bin = noise_per_bin
 
     if noise_per_bin is not None:
-        result.snr = np.mean(np.std(result.template_in_data_space,axis=1))/noise_per_bin
+        result.snr = np.sqrt(n)*np.mean(np.std(result.template_in_data_space,axis=1))/noise_per_bin
         result.uncert = np.sqrt(cov[-1,-1])*noise_per_bin
         result.reduced_chi2 = bias_corr*np.mean(result.residuals**2)/noise_per_bin**2
-    result.snr_residuals = np.mean(np.std(result.template_in_data_space,axis=1))/np.std(result.residuals)
+    result.snr_residuals = np.sqrt(n)*np.mean(np.std(result.template_in_data_space,axis=1))/np.std(result.residuals)
     cov_scaled = cov*bias_corr*np.mean(result.residuals**2)
     result.uncert_scaled = np.sqrt(cov_scaled[-1,-1])
     if ("leverage" in extra_outputs
@@ -425,6 +432,12 @@ def generate_toa_info(template, filename, noise="off-pulse", off_pulse_fraction=
     bw = F.get_bandwidth()
     cf = F.get_centre_frequency()
     freqs = F_fits['SUBINT'].data['DAT_FREQ']
+    if nchan==1 and len(freqs.shape)==1:
+        # Aargh. FITS simplifies arrays.
+        freqs = freqs[:,None]
+    if freqs.shape != (len(F), nchan):
+        raise ValueError("frequency array has shape %s instead of %s"
+                         % (freqs.shape, (len(F),nchan)))
     for i in range(len(F)):
         debug("subint %d of %d",i,len(F))
         I = F.get_Integration(i)
@@ -454,7 +467,7 @@ def generate_toa_info(template, filename, noise="off-pulse", off_pulse_fraction=
                          uncert_scaled=r.uncert_scaled,
                          P=P, weighted_frequency=I.weighted_frequency(j),
                          bw=bw/nchan, tsubint=I.get_duration(),
-                         nbin=sub_data.shape[1],
+                         nbin=sub_data.shape[1], 
                          )
             d = dict(mjd_string=mjd_string,
                      mjd=mjd,
@@ -466,6 +479,7 @@ def generate_toa_info(template, filename, noise="off-pulse", off_pulse_fraction=
             yield d
 
 def write_toa_info(F, toa_info):
+    t = toa_info.copy()
     flagpart = " ".join("-"+k+" "+str(v) for k,v in t["flags"].items())
     t["flagpart"] = flagpart
     l = ("{file} {freq} {mjd_string} {uncert} {tel} "

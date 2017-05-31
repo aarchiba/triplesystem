@@ -40,6 +40,12 @@ parser.add_argument("--njobs",
                     help="Number of parallel jobs to run (using joblib)",
                     type=int,
                     default=1)
+parser.add_argument("--trybad",
+                    help="Try to process observations marked 'knownbad'",
+                    action="store_true")
+parser.add_argument("--stop",
+                    help="Stop if an error occurs",
+                    action="store_true")
 args = parser.parse_args()
 
 
@@ -54,6 +60,8 @@ toa_specs[toa_name]
 
 print processing_name, toa_name
 
+class NoSpecError(pipe.ProcessingError):
+    pass
 
 def generate(observation, processing_name, toa_name):
     if not os.path.exists(join(observation, processing_name)):
@@ -62,7 +70,7 @@ def generate(observation, processing_name, toa_name):
         kwargs = spec["generic"].copy()
         k = meta["tel"], meta["band"]
         if k not in spec:
-            raise pipe.ProcessingError(
+            raise NoSpecError(
                 "No processing spec for %s in %s" % (k, processing_name))
         kwargs.update(spec[k])
         pipe.process_observation(observation, processing_name, **kwargs)
@@ -73,25 +81,34 @@ def generate(observation, processing_name, toa_name):
         kwargs = spec["generic"].copy()
         k = meta["tel"], meta["band"]
         if k not in spec:
-            raise pipe.ProcessingError(
+            raise NoSpecError(
                 "No TOA spec for %s in %s" % (k, toa_name))
         kwargs.update(spec[k])
         pipe.make_toas(observation, processing_name, toa_name, **kwargs)
 	plt.close('all')
 
-def generate_specific(observation):
+def generate_specific(observation, trybad=False, stop=False):
     print observation, processing_name, toa_name
+    kb = join(observation,"knownbad")
+    if os.path.exists(kb):
+        print "known bad, explanation:", open(kb,"rt").read()
+        if not trybad:
+            return
     try:
         generate(observation, processing_name, toa_name)
+    except NoSpecError as e:
+        print e
     except pipe.ProcessingError as e:
+        if stop:
+            raise
         print e
 
 observations = sorted(glob("data/obs/*_*_*"))
 
 if args.njobs==1:
     for o in observations:
-        generate_specific(o)
+        generate_specific(o, args.trybad, args.stop)
 else:
-    Parallel(n_jobs=args.njobs)(delayed(generate_specific)(o)
+    Parallel(n_jobs=args.njobs)(delayed(generate_specific)(o, args.trybad, args.stop)
                                        for o in observations)
 print "All observations tried."

@@ -7,6 +7,7 @@ import subprocess
 from glob import glob
 import pickle
 import shutil
+import shlex
 import numpy as np
 from backports import tempfile
 from os.path import join
@@ -18,12 +19,14 @@ import signal
 
 import astropy.units as u
 import astropy.coordinates
+from astropy.io import fits
 
 from logging import info, debug, error, warning, critical
 
 import psrchive
 import residuals
 
+import template_match
 from template_match import rotate_phase, convert_template, align_profile, align_scale_profile
 
 # tools for make-like conditional rerunning
@@ -413,11 +416,11 @@ class ProcessingError(ValueError):
 
 # Gathering raw data
 
-#data_location = "/psr_archive/hessels/archibald/0337+17"
+data_location_permanent = "/psr_archive/hessels/archibald/0337+17"
 data_location = "/data/archibald/0337+1715"
 scratch_location = "/data/archibald/scratch"
 par_db = EphemerisCollection(directory=join(data_location,"ephemerides"))
-wsrt_raw_location = join(data_location,"raw","WSRT")
+wsrt_raw_location = join(data_location_permanent,"raw","WSRT")
 wsrt_obs_glob = join(wsrt_raw_location,"*","*0337*")
 longterm_par = ("/misc/astron/archibald/projects/"
     "triplesystem/processing/longterm.par")
@@ -840,8 +843,16 @@ def zap_rfi(meta, inpat, outpat, median_r):
         ft2 = join(work_dir, "zaptemp2_%04d.ar" % i)
         # zap always-bad channels
         zo = zap[meta['receiver']]
+        # Manual zapping
+        g = glob(join(work_dir, "*_%04d.ar.paz" % i))
+        if g:
+            fname, = g
+            zapchans, zapsubs = read_manual_zap(fname)
+            if zapchans:
+                zo.extend(("-z", " ".join(str(c) for c in zapchans)))
+            if zapsubs:
+                zo.extend(("-w", " ".join(str(s) for s in zapsubs)))
         paz(fi, *zo, output=ft1, r=None, R=median_r)
-        # FIXME: allow manual zapping
         if meta["tel"] in ["AO"]:
             F = psrchive.Archive_load(ft1)
             # from obsys.dat
@@ -887,6 +898,8 @@ def zap_rfi(meta, inpat, outpat, median_r):
 def scrunch(meta, inpat, outpat, toa_bw, toa_time):
     work_dir = meta["work_dir"]
     infiles = sorted(glob(join(work_dir,inpat+"_*.ar")))
+    if len(infiles)==0:
+        raise ValueError("Input files mysteriously missing for pattern %s: %s" % (inpat,glob(join(work_dir,"*")),))
     outfiles = [join(work_dir,"scrunchtemp_%04d.ar"%i)
                     for i in range(len(infiles))]
     add_file = join(work_dir,"scrunchadd_0000.ar")
@@ -926,6 +939,28 @@ def scrunch(meta, inpat, outpat, toa_bw, toa_time):
     meta["scrunch_nchan"] = F.get_nchan()
     meta["scrunch_nsubint"] = F.get_nsubint()
     del F
+
+def read_manual_zap(fname):
+    zapchans = []
+    zapsubs = []
+    for l in open(fname).readlines():
+        s = shlex.split(l)
+        for (i,k) in enumerate(s):
+            if k=="-z":
+                zapchans += [int(c) for c in s[i+1].split()]
+            elif k=="-w":
+                zapsubs += [int(c) for c in s[i+1].split()]
+            elif k=="-Z":
+                b,e = [int(c) for c in s[i+1].split()]
+                zapchans += range(b,e+1)
+            elif k=="-W":
+                b,e = [int(c) for c in s[i+1].split()]
+                zapsubs += range(b,e+1)
+            elif k in ["-f","-F","-x","-X","-E","-s","-S"]:
+                raise ValueError("Edit '%s' not supported" % k)
+    if not zapchans and not zapsubs:
+        raise ProcessingError("No zaps extracted from %s" % fname)
+    return zapchans, zapsubs
 
 def process_observation(obs_dir, result_name,
                         work_dir=None,
@@ -978,12 +1013,36 @@ def process_observation(obs_dir, result_name,
 
         meta["work_dir"] = work_dir
 
+        if not meta["raw_files"]:
+            raise ProcessingError("No raw files listed in %s" % obs_dir)
+
         for i,f in enumerate(meta["raw_files"]):
             rn = join(work_dir, "raw_%04d.ar" % i)
             wf = join(obs_dir, f)
             if (not os.path.exists(rn)
                 or os.path.getmtime(rn)<os.path.getmtime(wf)):
                 shutil.copy(wf,rn)
+        for i,f in enumerate(meta["raw_files"]):
+            # Make copies of manual zapping files
+            rn = join(work_dir, "raw_%04d.ar.paz" % i)
+            wf = join(obs_dir, f+".paz")
+            if (os.path.exists(wf)
+                and (not os.path.exists(rn)
+                     or os.path.getmtime(rn)<os.path.getmtime(wf))):
+                shutil.copy(wf,rn)
+        # Mark files by mode
+        mode = "fold"
+        if meta["tel"] == "GBT": 
+            # we only have search-mode files from the GBT
+            # They aren't marked as having been folded after the fact
+            # The way to tell is by looking at the sample time "tbin"
+            # This matters because there's a few-hundred-microsecond
+            # difference in pulse arrival times
+            F = fits.open(join(work_dir, "raw_0000.ar"))
+            if F['subint'].header['tbin'] > 5e-6:
+                mode = "search"
+            del F
+        meta["mode"] = mode
 
         realign(meta, "raw", "align",
                 align_mode=align_mode)
@@ -1001,9 +1060,8 @@ def process_observation(obs_dir, result_name,
         # been autozapped, so weight_*.ar. The metadata should keep
         # track of manual zapping so it can be plotted on the summary.
         # The code should support multiple paz commands.
-        zap_rfi(meta, "cal", "zap",
-            median_r=median_r)
         # FIXME: reweight WSRT data
+        zap_rfi(meta, "cal", "zap", median_r=median_r)
         #reweight(meta, "zap", "weight")
         scrunch(meta, "zap", "scrunch",
                 toa_bw=toa_bw, toa_time=toa_time)
@@ -1037,7 +1095,7 @@ def generate_toa(obs_dir, processing_name, toa_name,
         for f in glob(join(p_dir,"scrunch_*.ar")):
             pat
 
-def prepare_toa_info(summary, match="pat"):
+def prepare_toa_info(summary, match="pat", snr_plot_threshold=10.):
     meta = summary["meta"]
     observation = meta["observation"]
     processing_name = meta["processing_name"]
@@ -1064,7 +1122,6 @@ def prepare_toa_info(summary, match="pat"):
         ls = l.split()
         mjd = float(ls[2])
         #print mjd, l
-        topo_toa.append(mjd)
         d = dict(mjd_string=ls[2],
                  mjd=mjd,
                  file=ls[0],
@@ -1080,8 +1137,6 @@ def prepare_toa_info(summary, match="pat"):
             raise ValueError("Apparently improper number of flags: %d in %s"
                                  % (len(ls),ls))
         toa_info.append(d)
-    topo_toa = np.array(topo_toa)
-    summary["topo_toa"] = topo_toa
     summary["toa_info"] = toa_info
     meta["ntoa"] = len(toa_info)
     if len(toa_info)==0:
@@ -1090,7 +1145,12 @@ def prepare_toa_info(summary, match="pat"):
     with tempfile.TemporaryDirectory("triple") as td:
         tim = join(td,"toas.tim")
         with open(tim,"wt") as f:
-            f.write(pat_output)
+            f.write("FORMAT 1\n")
+            for t in toa_info:
+                if "snr" in t["flags"] and float(t["flags"]["snr"])<snr_plot_threshold:
+                    continue
+                topo_toa.append(t["mjd"])
+                template_match.write_toa_info(f, t)
         par = par_db.get_par_for(meta["mjd"])
         subprocess.check_call(["tempo", "-f", par, tim],
                               cwd=td)
@@ -1105,6 +1165,8 @@ def prepare_toa_info(summary, match="pat"):
             summary["prefit_sec"] = resid2.prefit_sec
             summary["uncertainty"] = resid2.uncertainty
             summary["bary_freq"] = resid2.bary_freq
+            assert len(topo_toa)==len(resid2.prefit_sec)
+            summary["topo_toa"] = np.array(topo_toa)
         except IOError as e:
             meta["tempo_failed"] = True
             meta["rms_residual"] = np.nan
@@ -1116,6 +1178,9 @@ def prepare_toa_info(summary, match="pat"):
                 [t["uncert"] for t in toa_info])
             summary["bary_freq"] = np.array(
                 [t["freq"] for t in toa_info])
+            summary["topo_toa"] = np.array(
+                [t["mjd"] for t in toa_info])
+
 
 def prepare_scrunched(summary):
     meta = summary["meta"]
@@ -1507,6 +1572,11 @@ def make_toas(observation, processing_name, toa_name, template,
             for f in ["processing_name", "max_smearing",
                           "band", "tel", "toa_name"]:
                 t["flags"][f] = meta[f]
+            if "mode" in meta:
+                # not worth reprocessing all data to add mode flag
+                # users of new TOAs can presume unmarked data to be
+                # fold mode.
+                t["flags"]["mode"] = meta["mode"]
 
             flagpart = " ".join("-"+k+" "+str(v) for k,v in t["flags"].items())
             t["flagpart"] = flagpart
