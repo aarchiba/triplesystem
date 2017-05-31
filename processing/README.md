@@ -28,9 +28,22 @@ Things to watch out for
 -----------------------
 
 * WSRT telescope codes: i or j? one of these is baked into the raw data, and the version of tempo/tempo2 that interprets the ephemerides had better agree.
-** How do I find out what telescope code PSRCHIVE uses?
-** Just make tempo use both i and j for WSRT on dop263
+ * How do I find out what telescope code PSRCHIVE uses?
+ * Just make tempo use both i and j for WSRT on dop263
 * Change in tempo's BTX implementation - Marten van Kerkwijk's fixes made the BTX model in tempo work much better than it had previously. But has some of our data been taken with the old version? Will re-aligning these files work? Can we tell which version was used?
-** The key information is the per-Integration "epoch" value for each observation. This records the phase zero of the folded integration. The ephemeris originally used to fold the data is stored, but it need not be used to re-align the data to a new ephemeris.
-** Using psradd across frequencies requires a re-alignment with the stored ephemeris; this is asking for trouble if the stored ephemeris is somehow peculiar.
+ * The key information is the per-Integration "epoch" value for each observation. This records the phase zero of the folded integration. The ephemeris originally used to fold the data is stored, but it need not be used to re-align the data to a new ephemeris.
+ * Using psradd across frequencies requires a re-alignment with the stored ephemeris; this is asking for trouble if the stored ephemeris is somehow peculiar.
 * On nimrod some files produce mysterious failures ("could not execute shell; insufficient resources") that are not present for the same files on dop263.
+
+Code
+----
+
+The code exists as a couple of python modules driven by some ipython notebooks and standalone python programs. Entry points worth noting:
+
+* `bulk-processing.ipynb` - for driving (re)processing of observations
+* `make_toas.py` - script for processing large numbers of observations
+* `summary.ipynb` - quick summary of the observations we have
+* `collect-uppi-data.ipynb`, `collect-puppi-data.ipynb`, `collect-wsrt-data.ipynb` - for importing new data
+* `template_match.py` - module and standalone script for Mueller matrix fitting
+* `fit_segment.py` - Tool for producing short-term ephemerides
+* `pipe.py` - module implementing most of the pipeline
