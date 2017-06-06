@@ -16,6 +16,7 @@ import time
 from numpy.fft import rfft, irfft, fft, ifft
 import scipy.optimize
 import signal
+import warnings
 
 import astropy.units as u
 import astropy.coordinates
@@ -703,6 +704,17 @@ def process_uppi_batch(d,mjd,obsid,work_dir=None):
             if not os.path.exists(extra_info["obs_dir"]):
                 os.makedirs(extra_info["obs_dir"])
             for (i,f) in enumerate(tfs):
+                if i!=0:
+                    F = psrchive.Archive_load(f)
+                    extra_info["nsubint"] += len(F)
+                    if F.get_nchan()>extra_info["nchan"]:
+                        # Some files must be missing a GPU
+                        info("Later files have more channels")
+                        extra_info["nchan"] = F.get_nchan()
+                        extra_info["centre_frequency"] = F.get_centre_frequency()
+                        extra_info["bw"] = F.get_bandwidth()
+                    del F
+                        
                 tf = "raw_%04d.ar" % i
                 shutil.copy(f,
                     join(extra_info["obs_dir"], tf))
@@ -1276,6 +1288,14 @@ def prepare_scrunched(summary):
     summary["te"] = te
     summary["t_values"] = t_values
 
+def accumulate(a, weights, axis=None):
+    s = (a*weights).sum(axis=axis)
+    w = weights.sum(axis=axis)
+    a = np.ma.array(s)
+    a[w==0] = np.ma.masked
+    a /= w
+    return a, s, w
+
 def prepare_unscrunched(summary):
     meta = summary["meta"]
     observation = meta["observation"]
@@ -1287,10 +1307,13 @@ def prepare_unscrunched(summary):
     unscrunched = sorted(glob(join(p_dir, "zap_*.ar")))
 
     gtp_data = None
+    gtp_sum = None
     gtp_weight = None
     prof_data = None
+    prof_sum = None
     prof_weight = None
     std_data = None
+    std_sum = None
     std_weight = None
 
     yfp_data = []
@@ -1307,6 +1330,9 @@ def prepare_unscrunched(summary):
         d = F.get_data()
         # axes are (subint, channel)
         w = F.get_weights()
+        if F.get_nchan() != meta["nchan"]:
+            raise ProcessingError("File %s has %d channels but expected %d"
+                                  % (u, F.get_nchan(), meta["nchan"]))
 
         sm = meta["smearing"][i].copy()
         if "raw_smearing" in meta:
@@ -1328,49 +1354,52 @@ def prepare_unscrunched(summary):
         # Specifically, if ever it becomes all masked, new nonzero weights won't
         # fix the problem. The solution is to work with sums instead, and divide
         # by the weights afterward.
-        sd, sw = np.ma.average(d, weights=w[:,None,:,None]+0*d,
-                                   axis=2, returned=True)
-        sd, sw = np.ma.average(sd, weights=sw, axis=0, returned=True)
+        sa, sd, sw = accumulate(d, weights=w[:,None,:,None]+0*d,
+                                axis=2)
+        sa, sd, sw = accumulate(sd, weights=sw, axis=0)
         if prof_data is None:
-            prof_data, prof_weights = sd, sw
+            prof_data, prof_sum, prof_weights = sa, sd, sw
         else:
-            prof_data = (prof_data*prof_weights+sd*sw)/(prof_weights+sw)
+            prof_sum += sd
             prof_weights += sw
+            prof_data = prof_sum/prof_weights
 
         # Noise std. dev per bin (pre-averaging)
         sd = np.std(d[:,0,:,:], axis=-1)
-        sd, sw = np.ma.average(sd,weights=w,returned=True)
+        sa, sd, sw = accumulate(sd,weights=w)
         if std_data is None:
-            std_data, std_weight = sd, sw
+            std_data, std_sum, std_weight = sa, sd, sw
         else:
-            std_data = (std_data*std_weight+sd*sw)/(std_weight+sw)
+            std_sum += sd
             std_weight += sw
+            std_data = std_sum/std_weight
 
         # GTp plot
-        sd, sw = np.ma.average(d[:,0], weights=w[...,None]+0*d[:,0],
-                                   axis=0, returned=True)
+        sa, sd, sw = accumulate(d[:,0], weights=w[...,None]+0*d[:,0],
+                                axis=0)
         if gtp_data is None:
-            gtp_data, gtp_weights = sd, sw
+            gtp_data, gtp_sum, gtp_weights = sa, sd, sw
         else:
-            gtp_data = (gtp_data*gtp_weights+sd*sw)/(gtp_weights+sw)
+            gtp_sum += sd
             gtp_weights += sw
+            gtp_data = gtp_sum/gtp_weights
 
         # YFp plot
-        yd, yw = np.ma.average(d[:,0], weights=w[...,None]+0*d[:,0],
-                                   axis=1, returned=True)
-        yd = np.ma.array(yd)
-        yd[yw==0] = np.ma.masked
+        ya, yd, yw = accumulate(d[:,0], weights=w[...,None]+0*d[:,0],
+                                axis=1)
+        ya = np.ma.array(ya)
+        ya[yw==0] = np.ma.masked
         b = (F.start_time().in_days()-meta["tstart"])*86400
         e = (F.end_time().in_days()-meta["tstart"])*86400
-        yfp_data.append(yd)
+        yfp_data.append(ya)
         yfp_start_end.append((b,e))
     gtp_data = np.ma.array(gtp_data)
     gtp_data[gtp_weights==0] = np.ma.masked
 
     if np.sum(prof_weights)==0:
         raise ProcessingError("All data appears to have been zapped")
-    if prof_data.count()==0:
-        raise ProcessingError("The entire profile is masked but weights are nonzero")
+    #if prof_data.count()==0:
+    #    raise ProcessingError("The entire profile is masked but weights are nonzero")
     phase, amp, bg = align_scale_profile(t_values, prof_data[0])
     t_fit = rotate_phase(t_values, phase)*amp + bg
     osnr = float(np.sqrt(nb)*np.std(t_fit)/np.std(prof_data[0]-t_fit))
