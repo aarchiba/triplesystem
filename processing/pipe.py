@@ -859,12 +859,16 @@ def zap_rfi(meta, inpat, outpat, median_r):
         g = glob(join(work_dir, "*_%04d.ar.paz" % i))
         if g:
             fname, = g
-            zapchans, zapsubs = read_manual_zap(fname)
+            zapchans, zapsubs = read_manual_zap(fname,nchan=meta["nchan"])
             if zapchans:
                 zo.extend(("-z", " ".join(str(c) for c in zapchans)))
             if zapsubs:
                 zo.extend(("-w", " ".join(str(s) for s in zapsubs)))
-        paz(fi, *zo, output=ft1, r=None, R=median_r)
+        if median_r is None:
+            # FIXME: what happens if no manual or always zapping either?
+            paz(fi, *zo, output=ft1)
+        else:
+            paz(fi, *zo, output=ft1, r=None, R=median_r)
         if meta["tel"] in ["AO"]:
             F = psrchive.Archive_load(ft1)
             # from obsys.dat
@@ -952,7 +956,7 @@ def scrunch(meta, inpat, outpat, toa_bw, toa_time):
     meta["scrunch_nsubint"] = F.get_nsubint()
     del F
 
-def read_manual_zap(fname):
+def read_manual_zap(fname,nchan=None):
     zapchans = []
     zapsubs = []
     for l in open(fname).readlines():
@@ -970,8 +974,15 @@ def read_manual_zap(fname):
                 zapsubs += range(b,e+1)
             elif k in ["-f","-F","-x","-X","-E","-s","-S"]:
                 raise ValueError("Edit '%s' not supported" % k)
+    if nchan is not None:
+        n = len(zapchans)
+        zapchans = [c for c in zapchans if c<nchan]
+        if len(zapchans)!=n:
+            error("bogus channel detected in zap instructions, deleting and continuing")
     if not zapchans and not zapsubs:
         raise ProcessingError("No zaps extracted from %s" % fname)
+    zapchans.sort()
+    zapsubs.sort()
     return zapchans, zapsubs
 
 def process_observation(obs_dir, result_name,
@@ -1291,7 +1302,7 @@ def prepare_scrunched(summary):
 def accumulate(a, weights, axis=None):
     s = (a*weights).sum(axis=axis)
     w = weights.sum(axis=axis)
-    a = np.ma.array(s)
+    a = np.ma.array(s.copy())
     a[w==0] = np.ma.masked
     a /= w
     return a, s, w
@@ -1358,11 +1369,21 @@ def prepare_unscrunched(summary):
                                 axis=2)
         sa, sd, sw = accumulate(sd, weights=sw, axis=0)
         if prof_data is None:
+            #print("Initializing profile with %g (%g) total weight from %s" % (np.sum(sw),np.sum(w), u))
             prof_data, prof_sum, prof_weights = sa, sd, sw
         else:
+            #print("Adding %g (%g) total weight to profile from %s" % (np.sum(sw), np.sum(w), u))
             prof_sum += sd
             prof_weights += sw
-            prof_data = prof_sum/prof_weights
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                prof_data = prof_sum/prof_weights
+            prof_data = np.ma.array(prof_data)
+            prof_data[prof_weights==0] = np.ma.masked
+            # weights should only be zero if entire observation was zapped
+        #import matplotlib.pyplot as plt
+        #plt.figure()
+        #template_match.plot_iquv(prof_sum, linestyle="-")
 
         # Noise std. dev per bin (pre-averaging)
         sd = np.std(d[:,0,:,:], axis=-1)
@@ -1382,15 +1403,18 @@ def prepare_unscrunched(summary):
         else:
             gtp_sum += sd
             gtp_weights += sw
-            gtp_data = gtp_sum/gtp_weights
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                gtp_data = gtp_sum/gtp_weights
+            gtp_data = np.ma.array(gtp_data)
+            gtp_data[gtp_weights==0] = np.ma.masked
 
         # YFp plot
         ya, yd, yw = accumulate(d[:,0], weights=w[...,None]+0*d[:,0],
                                 axis=1)
-        ya = np.ma.array(ya)
-        ya[yw==0] = np.ma.masked
         b = (F.start_time().in_days()-meta["tstart"])*86400
         e = (F.end_time().in_days()-meta["tstart"])*86400
+        info("total weight from %s is %g" % (u, yw.sum()))
         yfp_data.append(ya)
         yfp_start_end.append((b,e))
     gtp_data = np.ma.array(gtp_data)
