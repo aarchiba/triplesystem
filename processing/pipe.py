@@ -1225,8 +1225,8 @@ def prepare_scrunched(summary):
     t_values = convert_template(T.get_data()[0,0,0,:], meta["nbin"])
     t_phases = np.linspace(0,1,len(t_values),endpoint=False)
 
-    snr_sum = 0
-    snr_weight = 0
+    snr_sum = np.float(0)
+    snr_weight = np.float(0)
     snr_data = []
 
     min_f = meta["centre_frequency"]-meta["bw"]/2
