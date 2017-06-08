@@ -40,10 +40,11 @@ Code
 
 The code exists as a couple of python modules driven by some ipython notebooks and standalone python programs. Entry points worth noting:
 
+* `collect-uppi-data.ipynb`, `collect-puppi-data.ipynb`, `collect-wsrt-data.ipynb` - for importing new data
+* `pac-preparation.ipynb` - for importing new cal scans
 * `bulk-processing.ipynb` - for driving (re)processing of observations
 * `make_toas.py` - script for processing large numbers of observations
 * `summary.ipynb` - quick summary of the observations we have
-* `collect-uppi-data.ipynb`, `collect-puppi-data.ipynb`, `collect-wsrt-data.ipynb` - for importing new data
 * `template_match.py` - module and standalone script for Mueller matrix fitting
 * `fit_segment.py` - Tool for producing short-term ephemerides
 * `pipe.py` - module implementing most of the pipeline
