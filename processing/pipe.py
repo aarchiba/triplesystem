@@ -756,7 +756,7 @@ def process_uppi_dir(d):
 # Standard zap commands (paz arguments) to apply per receiver
 # 'default' is applied to any reciever not listed
 zap = {
-        'Rcvr1_2':["-F","1100 1150",
+        'Rcvr1_2':["-F","1100 1150", # GBT_1400
                    "-F","1250 1262",
                    "-F","1288 1300",
                    "-F","1373 1381",
@@ -764,7 +764,10 @@ zap = {
                    "-F","1525 1558",
                    "-F","1575 1577",
                    "-F","1615 1630",
-                   "-F","1370 1385"],
+                   "-F","1370 1385",
+                   "-F","1738 1740",
+                   "-F","1691 1693",
+                   "-F","1299 1309"],
         'Rcvr_800':["-F","794.6 798.6",
                     "-F","814.1 820.7"],
         '327':[],
