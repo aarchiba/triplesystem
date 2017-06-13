@@ -756,7 +756,7 @@ def process_uppi_dir(d):
 # Standard zap commands (paz arguments) to apply per receiver
 # 'default' is applied to any reciever not listed
 zap = {
-        'Rcvr1_2':["-F","1100 1150", # GBT_1400
+        'Rcvr1_2':("-F","1100 1150", # GBT_1400
                    "-F","1250 1262",
                    "-F","1288 1300",
                    "-F","1373 1381",
@@ -767,20 +767,20 @@ zap = {
                    "-F","1370 1385",
                    "-F","1738 1740",
                    "-F","1691 1693",
-                   "-F","1299 1309"],
-        'Rcvr_800':["-F","794.6 798.6",
-                    "-F","814.1 820.7"],
-        '327':[],
-        '430':["-F","380 420",
-               "-F","446 480"],
-        'lbw':["-F","980 1150",
-                  "-F","1618 1630"],
-        'sbw':["-F","1600 1770",
+                   "-F","1299 1309"),
+        'Rcvr_800':("-F","794.6 798.6",
+                    "-F","814.1 820.7"),
+        '327':(),
+        '430':("-F","380 420",
+               "-F","446 480"),
+        'lbw':("-F","980 1150",
+                  "-F","1618 1630"),
+        'sbw':("-F","1600 1770",
                   "-F","1880 2050",
                   "-F","2100 2160",
-                  "-F","2400 2600"],
-        'PuMa2_350':[],
-        'PuMa2_1400':[],
+                  "-F","2400 2600"),
+        'PuMa2_350':(),
+        'PuMa2_1400':(),
     }
 
 def copy_if_newer(fi, fo):
@@ -840,9 +840,11 @@ def calibrate(meta, inpat, outpat, cal_db):
                 if os.path.exists(fio+"P"):
                     shutil.copy(fio+"P", fo)
                     meta["calibration_type"] = "polarization"
-                else:
+                elif os.path.exists(fio):
                     shutil.copy(fio, fo)
                     meta["calibration_type"] = "flux"
+                else:
+                    raise ProcessingError("pac failed to generate a recognizable calibration file %s but did not report an error condition" % fio)
             else:
                 shutil.copy(fi,fo)
                 meta["calibration_type"] = "none"
@@ -857,7 +859,7 @@ def zap_rfi(meta, inpat, outpat, median_r):
         ft1 = join(work_dir, "zaptemp_%04d.ar" % i)
         ft2 = join(work_dir, "zaptemp2_%04d.ar" % i)
         # zap always-bad channels
-        zo = zap[meta['receiver']]
+        zo = list(zap[meta['receiver']])
         # Manual zapping
         g = glob(join(work_dir, "*_%04d.ar.paz" % i))
         if g:
@@ -1147,7 +1149,6 @@ def prepare_toa_info(summary, match="pat", snr_plot_threshold=10.):
             continue
         ls = l.split()
         mjd = float(ls[2])
-        #print mjd, l
         d = dict(mjd_string=ls[2],
                  mjd=mjd,
                  file=ls[0],
@@ -1268,7 +1269,6 @@ def prepare_scrunched(summary):
                 i = int(t["flags"]["subint"])
             else:
                 i = np.searchsorted(subix,t["mjd"])-1
-            #print(t["mjd"], t["freq"], i, j, min_f, max_f)
             if (i,j) in toa_by_index:
                 raise ProcessingError("Problem matching TOAs with "
                                       "subintegrations for %s: (%d,%d duplicated)" 
@@ -1372,10 +1372,8 @@ def prepare_unscrunched(summary):
                                 axis=2)
         sa, sd, sw = accumulate(sd, weights=sw, axis=0)
         if prof_data is None:
-            #print("Initializing profile with %g (%g) total weight from %s" % (np.sum(sw),np.sum(w), u))
             prof_data, prof_sum, prof_weights = sa, sd, sw
         else:
-            #print("Adding %g (%g) total weight to profile from %s" % (np.sum(sw), np.sum(w), u))
             prof_sum += sd
             prof_weights += sw
             with warnings.catch_warnings():
