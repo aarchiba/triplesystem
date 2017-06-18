@@ -1,3 +1,4 @@
+from __future__ import division
 import os
 import string
 import random
@@ -7,6 +8,7 @@ import sys
 import logging
 import cPickle as pickle
 import inspect
+import subprocess
 
 import numpy as np
 import numpy.random
@@ -20,9 +22,11 @@ import kepler
 import quad_integrate
 
 if True:
+    # Huh?
     logger = logging.getLogger(__name__)
     debug = logger.debug
     error = logger.error
+    info = logger.info
 else:
     def debug(s):
         pass
@@ -62,11 +66,12 @@ def read_t2_toas(fname):
 def write_t2_toas(fname, toa_info):
     with open(fname,"wt") as F:
         F.write("FORMAT 1\n")
-        for toa_info in toa_infos:
+        for t in toa_info:
+            tt = t.copy()
             flagpart = " ".join("-"+k+" "+str(v) for k,v in t["flags"].items())
-            t["flagpart"] = flagpart
+            tt["flagpart"] = flagpart
             l = ("{file} {freq} {mjd_string} {uncert} {tel} "
-                 "{flagpart}").format(**t)
+                 "{flagpart}").format(**tt)
             F.write(l)
             F.write("\n")
 
@@ -248,12 +253,15 @@ def load_pipeline_toas(timfile,
 
     toa_info = read_t2_toas(timfile)
 
+    if t2outfile is None:
+        t2outfile = ""
+    if (os.path.exists(t2outfile) 
+        and os.path.getmtime(t2outfile)<os.path.getmtime(timfile)):
+        info("tempo2 output appears to be old, deleting to trigger recomputation")
+        os.unlink(t2outfile)
     try:
-        if t2outfile is None:
-            t2outfile = ""
         o = open(t2outfile).read()
     except IOError:
-        import subprocess, os
         e = os.environ.copy()
         e['TEMPO2'] = tempo2_dir
         outline = "OUTPUT {bat} {freq} {err} {%s}\n"%("} {".join(astro_names))
@@ -287,10 +295,10 @@ def load_pipeline_toas(timfile,
         derivs[n] = np.array(derivs[n])
     if len(t2_bats) != len(toa_info):
         raise ValueError("tempo2 produced %d outputs but we found %d TOAs" % (len(t2_bats), len(toa_info)))
-    pulses = np.zeros(len(toa_info),dtype=np.int64)
+    pulses = np.zeros(len(toa_info),dtype=np.float128)
     for i,t in enumerate(toa_info):
         if "pn" in t["flags"]:
-            pulses[i] = np.int64(t["flags"])
+            pulses[i] = np.float128(t["flags"]["pn"])
     if np.any(pulses==0):
         pulses = None
     tel_list = []
