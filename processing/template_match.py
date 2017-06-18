@@ -26,7 +26,7 @@ from __future__ import division, print_function
 
 import sys
 import logging
-from logging import debug, info
+from logging import debug, info, error
 import numbers
 
 import numpy as np
@@ -317,10 +317,10 @@ def align_profile_polarization(template, data,
     except ValueError as err:
         if isinstance(global_search, numbers.Number):
             raise TemplateMatchError("Provided initial guess not close enough to fit")
-        print(global_search)
+        error(global_search)
         i = np.argmin(res)
-        print(res[(i-1)%len(phases)], res[i], res[(i+1)%len(phases)])
-        print(qof(template, data, bracket[0]), 
+        error(res[(i-1)%len(phases)], res[i], res[(i+1)%len(phases)])
+        error(qof(template, data, bracket[0]), 
               qof(template, data, bracket[1]), 
               qof(template, data, bracket[2]))
         raise
