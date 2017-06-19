@@ -19,46 +19,48 @@ def printoptions(*args, **kwargs):
     finally:
         np.set_printoptions(**original)
 
-_fdef = """
-def wrapfunc2(%s):
-    return wrapfunc(%s)
-"""
-
 class Fitter(object):
     def __init__(self, func, *args, **kwargs):
         self.stdout = open('/dev/stdout', 'wt')
-        fargs = inspect.getargspec(func).args
+        fargs = func.func_code.co_varnames
         if fargs[0] == 'self':
             fargs = fargs[1:]
-        def wrapfunc(*args):
-            if self.printMode:
-                a = np.array(args)
-                cols = int(subprocess.check_output(['tput','cols']))
-                cols = max(cols-10,10)
-                with printoptions(linewidth=cols, precision=4):
-                    if self.lastcall is None:
-                        self.stdout.write(str(a))
-                    else:
-                        self.stdout.write(str(a-self.lastcall))
-                    self.lastcall = a
-                    self.stdout.flush()
-                    
-            r = func(**dict(self._denormalize(fargs,args)))
-            if self.printMode:
-                self.stdout.write("\t%.6g" % r)
-                if self.best_values_fval is not None:
-                    self.stdout.write("\t%.4g" % (r-self.best_values_fval))
-                self.stdout.write("\n")
+        outer_self = self
+        class Wrapfunc:
+            def __init__(iself):
+                class Thing: pass
+                iself.func_code = Thing()
+                iself.func_code.co_varnames = func.func_code.co_varnames
+                iself.func_code.co_argcount = func.func_code.co_argcount
+            def __call__(iself, *args):
+                if self.printMode:
+                    a = np.array(args)
+                    cols = int(subprocess.check_output(['tput','cols']))
+                    cols = max(cols-10,10)
+                    with printoptions(linewidth=cols, precision=4):
+                        if self.lastcall is None:
+                            self.stdout.write(str(a))
+                        else:
+                            self.stdout.write(str(a-self.lastcall))
+                        self.lastcall = a
+                        self.stdout.flush()
 
-            if self.best_values is None or r<self.best_values_fval:
-                self.best_values = dict(self._denormalize(fargs,args))
-                self.best_values_fval = r
-                if self.best_filename is not None:
-                    with open(self.best_filename,"wb") as f:
-                        pickle.dump(self.best_values, f)
-            return r
-        s = ",".join(fargs)
-        exec _fdef % (s,s) in locals()
+                call_values = self._denormalize(fargs,args)
+                r = func(*[v for (k,v) in call_values])
+                if self.printMode:
+                    self.stdout.write("\t%.6g" % r)
+                    if self.best_values_fval is not None:
+                        self.stdout.write("\t%.4g" % (r-self.best_values_fval))
+                    self.stdout.write("\n")
+
+                if self.best_values is None or r<self.best_values_fval:
+                    self.best_values = call_values.copy()
+                    self.best_values_fval = r
+                    if self.best_filename is not None:
+                        with open(self.best_filename,"wb") as f:
+                            pickle.dump(self.best_values, f)
+                return r
+        wrapfunc2 = Wrapfunc()
         self._minuit = iminuit.Minuit(wrapfunc2,*args,pedantic=False,**kwargs)
         self.scale = dict((a,np.float128(1.)) for a in fargs)
         self.offset = dict((a,np.float128(0.)) for a in fargs)

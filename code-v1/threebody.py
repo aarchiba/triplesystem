@@ -85,7 +85,7 @@ abbreviate_infos = {
 
 #              tempo2_program = '/home/aarchiba/software/tempo2/tempo2/tempo2',
 #              tempo2_dir = '/home/aarchiba/software/tempo2/t2dir',
-astro_names = ["d_RAJ","d_DECJ","d_PX","d_PMRA","d_PMDEC"]
+astro_names = ["d_RAJ","d_DECJ","d_PX","d_PMRA","d_PMDEC","d_DM"]
 def load_toas(timfile = '0337+17.tim',
               pulses = '0337+17.pulses',
               parfile = '0337_bogus.par',
@@ -302,16 +302,12 @@ def load_pipeline_toas(timfile,
     if np.any(pulses==0):
         pulses = None
     tel_list = []
-    telcode_dict = { 
-        ("WSRT",1400): "WSRT1400",
-        ("AO",1400): "AO1350",
-        ("GBT",1400): "GBT1500",
-        ("WSRT",350): "WSRT350",
-        ("AO",430): "AO430",
-    }
+    def telname(k):
+        return k[0]+"_"+str(k[1])
+
     for t in toa_info:
         k = t["flags"]["tel"], int(t["flags"]["band"])
-        telcode = telcode_dict[k]
+        telcode = telname(k)
         if telcode not in tel_list:
             tel_list.append(telcode)
     tel_list.sort()
@@ -319,7 +315,7 @@ def load_pipeline_toas(timfile,
     tels = []
     for t in toa_info:
         k = t["flags"]["tel"], int(t["flags"]["band"])
-        telcode = telcode_dict[k]
+        telcode = telname(k)
         tels.append(tel_list.index(telcode))
     tels = np.array(tels)
 
@@ -336,9 +332,10 @@ def load_pipeline_toas(timfile,
 
 
 def trend_matrix(mjds, tel_list, tels,
-    const=True, P=True, Pdot=True, jumps=True,
+    const=True, jumps=True,
     position=False, proper_motion=False, parallax=False,
     derivs=None,
+    dm=False,
     f0 = 365.9533436144258189, pepoch = 56100, mjdbase = 55920,
     tel_base = 'WSRT1400'):
     """Build a matrix describing various linear parameters
@@ -352,27 +349,17 @@ def trend_matrix(mjds, tel_list, tels,
     names = []
     if const:
         non_orbital_basis.append(np.ones_like(mjds))
-        names.append("const")
-    if P:
-        non_orbital_basis.append(f0**(-1)*((mjds-pepoch)*86400))
-        names.append("f0error")
-    if Pdot:
-        non_orbital_basis.append(f0**(-1)*0.5*((mjds-pepoch)*86400)**2)
-        names.append("f1error")
+        names.append("phase")
     if derivs is None:
+        # Just use tempo2 for derivatives if you need any of these
         if position:
-            non_orbital_basis.extend([1e-6*np.cos(2*np.pi*mjds/year_length),
-                                      1e-6*np.sin(2*np.pi*mjds/year_length)])
-            names += ["pos_cos", "pos_sin"]
+            raise ValueError
         if proper_motion:
-            non_orbital_basis.extend(
-                [(mjds-pepoch)*np.cos(2*np.pi*mjds/year_length),
-                 (mjds-pepoch)*np.sin(2*np.pi*mjds/year_length)])
-            names += ["pm_cos", "pm_sin"]
+            raise ValueError
         if parallax:
-            non_orbital_basis.extend([np.cos(4*np.pi*mjds/year_length),
-                                      np.sin(4*np.pi*mjds/year_length)])
-            names += ["px_cos", "px_sin"]
+            raise ValueError
+        if dm:
+            raise ValueError
     else: # t2_astrometry
         new_names = []
         if position:
@@ -381,6 +368,9 @@ def trend_matrix(mjds, tel_list, tels,
             new_names += ['d_PMRA','d_PMDEC']
         if parallax:
             new_names += ['d_PX']
+        if dm:
+            debug("Fitting DM")
+            new_names += ['d_DM']
         names += new_names
         for n in new_names:
             non_orbital_basis.append(derivs[n])
@@ -708,6 +698,23 @@ def report(F, correlations=True, correlation_threshold=0.5):
                 if np.abs(c)>correlation_threshold:
                     print n, m, c
 
+def lstsq(A, b):
+    """Solve a linear least-sqsuares problem
+
+    This is meant to be a drop-in replacement for `scipy.linalg.lstsq`.
+    The difference is that you can improve the condition number of A
+    dramatically by rescaling its columns; you then of course need to
+    rescale the best-fit values appropriately. This function does that.
+    """
+
+    Ascales = np.sqrt(np.sum(A**2,axis=0))
+    As = A/Ascales[None,:]
+    xs, res, rk, s = scipy.linalg.lstsq(As, b)
+    if rk != A.shape[1]:
+        raise ValueError("Condition number still too bad; singular values are %s"
+                         % s)
+    x = xs/Ascales # FIXME: test for multiple b
+    return x, res, rk, s
 
 def load_best_parameter_database():
     with open("best-parameter-database.pickle","rb") as f:
@@ -764,8 +771,10 @@ class Fitter(object):
                  kopeikin=False,
                  shapiro=True,
                  linear_jumps=False,
+                 linear_dm=False,
                  priors=(),
-                 toa_mode=None):
+                 toa_mode=None,
+                 reference_f0=365.95336876828094):
         """Set up a Fitter object
 
         This loads a data set (see load_toas), optionally selects only
@@ -809,9 +818,11 @@ class Fitter(object):
         self.t2_astrometry = t2_astrometry
         self.kopeikin = kopeikin
         self.linear_jumps = linear_jumps
+        self.linear_dm = linear_dm
+        self.reference_f0 = reference_f0
 
         self.files = files
-        try:
+        try: # What is this?
             V = astropy.table.Table.read(files)
         except Exception:
             V = None
@@ -1014,7 +1025,7 @@ class Fitter(object):
                     continue
                 c = self.tels == i
                 self.uncerts[c] *= edict[t]
-        self.phase_uncerts = self.uncerts*self.best_parameters['f0']
+        self.phase_uncerts = self.uncerts*self.reference_f0
         if t2_astrometry:
             derivs=self.derivs
         else:
@@ -1026,7 +1037,9 @@ class Fitter(object):
             proper_motion=self.fit_pm,
             parallax=self.fit_px,
             derivs=self.derivs,
-            const=False, P=False, Pdot=False, jumps=True)
+            dm=self.linear_dm,
+            const=True, 
+            jumps=True)
 
         if not self.linear_jumps:
             self.parameters += self.jnames
@@ -1034,47 +1047,13 @@ class Fitter(object):
         self.last_p = None
         self.last_orbit = None
 
-    def bootstrap(self):
-        """Replace the observations with a "new" set chosen with replacement
-
-        This is a utility function for error estimation using the bootstrap
-        algorithm. It generates an ostensibly different set of observations
-        by choosing from the available observations with replacement. The
-        modified object can then be used to obtain a new set of best-fit
-        parameters. The scatter in these values over many runs provides
-        an error estimate.
-        """
-        ix = np.random.randint(0,len(self.mjds),len(self.mjds))
-        ix.sort()
-        self.mjds = self.mjds[ix]
-        self.pulses = self.pulses[ix]
-        self.uncerts = self.uncerts[ix]
-        self.phase_uncerts = self.phase_uncerts[ix]
-        self.tels = self.tels[ix]
-        for k in self.derivs:
-            if len(self.derivs[k])==0:
-                continue
-            self.derivs[k] = self.derivs[k][ix]
-        self.jmatrix, self.jnames = trend_matrix(
-            self.mjds, self.tel_list, self.tels,
-            tel_base=self.tel_base,
-            position=self.fit_pos,
-            proper_motion=self.fit_pm,
-            parallax=self.fit_px,
-            derivs=self.derivs,
-            const=False, P=False, Pdot=False, jumps=True)
-        self.last_p = None
-        self.last_orbit = None
-
     def compute_orbit(self, p):
         debug("Started compute_orbit for %s" % repr(p))
         if p!=self.last_p:
             debug("compute_orbit cache miss, running calculation")
-            jumps = np.dot(self.jmatrix,
-                               np.array([p.get(n,0) for n in self.jnames]))
             debug("Calling compute_orbit")
             o = compute_orbit(p,
-                    (self.mjds)-(jumps/86400.).astype(np.float128),
+                    self.mjds,
                     keep_states=True)
             debug("Back from compute_orbit after time %s (%d evaluations)"
                       % (o['time'],o['n_evaluations']))
@@ -1083,23 +1062,23 @@ class Fitter(object):
         else:
             debug("compute_orbit cache hit")
         return self.last_orbit
-    def residuals(self, p=None, linear_jumps=None, marginalize=False):
+    def fit_matrix(self, t_psr_s):
+        pepoch = np.longdouble(0.)
+        cols = {}
+        cols["f0"] = t_psr_s-pepoch
+        cols["f1"] = (t_psr_s-pepoch)**2
+        for i, n in enumerate(self.jnames):
+            cols[n] = self.jmatrix[:,i]
+        names = sorted(cols.keys())
+        A = np.array([cols[n] for n in names], dtype=np.longdouble).T
+        return A, names
+    def residuals(self, p=None, linear_fit=True, marginalize=False):
         """Compute the phase residuals corresponing to a parameter dict
 
         Given a set of parameters, compute the orbit, then evaluate
         the predicted pulsar phase at the time each pulse was observed;
         return the difference between this and the integer pulse number
         at which the pulse was emitted.
-
-        In addition to the parameters used by compute_orbit (q.v.) there
-        are a number of additional parameters that are read from p:
-            j_* - time difference between telescopes
-            pos_cos, pos_sin - time delays due to position errors
-            f0 - pulsar spin frequency as of self.base_mjd
-            f1 - pulsar spin frequency derivative
-            tzrmjd - zero of pulse phase
-        If some of the last three are missing, their best-fit values
-        will automatically be computed and their effect subtracted.
 
         If the marginalize parameter is True, this function will also
         return half the logarithm of the determinant of the matrix of
@@ -1108,38 +1087,26 @@ class Fitter(object):
         these linear parameters.
         """
         debug("Started residuals for %s" % repr(p))
-        if linear_jumps is None:
-            linear_jumps = self.linear_jumps
         if p is None:
             p = self.best_parameters
         o = self.compute_orbit(p)
         t_psr_s = o['t_psr']*86400.
-        if 'tzrmjd' in p and 'f1' in p and 'f0' in p:
-            debug("Using tzrmjd f0 and f1 from parameters")
-            if 'tzrmjd_base' in p:
-                tzrmjd_base = p['tzrmjd_base']
-            else:
-                tzrmjd_base = self.tzrmjd_base
-            tzrmjd_s = (p['tzrmjd']+(tzrmjd_base-self.base_mjd))*86400
-            # assume PEPOCH is self.base_mjd
-            phase = p['f0']*t_psr_s+p['f1']*t_psr_s**2/2.
-            phase -= p['f0']*tzrmjd_s+p['f1']*tzrmjd_s**2/2.
+        pulses = self.pulses - self.reference_f0*t_psr_s
+        A, names = self.fit_matrix(t_psr_s)
+        if not linear_fit:
+            debug("Using linear values from parameters")
+            x = np.array([p[n] for n in names], dtype=np.longdouble)
+            phase = np.dot(A,x)
             if marginalize:
                 return phase-self.pulses, 0
             else:
                 return phase-self.pulses
-        else:
+        else: # linear_fit
             debug("Setting up linear least-squares fitting")
             b = self.pulses.copy()
-            At = [np.ones(len(self.pulses),dtype=t_psr_s.dtype),
-                  (t_psr_s/t_psr_s[-1]), (t_psr_s/t_psr_s[-1])**2]
-            if linear_jumps:
-                for i in range(1,len(self.tel_list)):
-                    At.append(self.tels==i)
-            A = np.array(At).T
             for i in range(3):
                 debug("Linear least-squares iteration %d" % i)
-                x, rk, res, s = scipy.linalg.lstsq(
+                x, rk, res, s = lstsq(
                     A/self.phase_uncerts[:,None],
                     b/self.phase_uncerts)
                 if not np.all(np.isfinite(x)):
@@ -1149,43 +1116,33 @@ class Fitter(object):
                 b -= np.dot(A,x)
                 debug("A[0]: %s b[0]: %s" % (A[0],b[0]))
                 debug("x: %s" % x)
+                debug("Least-squares singular values: %s", s)
+                debug("svdvals: %s", scipy.linalg.svdvals(A))
                 debug("Linear least-squares residual RMS %g"
                           % np.sqrt(np.mean(b**2)))
             debug("Done linear least-squares")
             if marginalize:
                 As = A/self.phase_uncerts[:,None]
+                # FIXME: this can be done in long double 
+                # based on a matrix decomposition of As
                 s, m = np.linalg.slogdet(np.dot(As.T,As).astype(float))
                 return -b, 0.5*m
             else:
                 return -b
-    def compute_linear_matrix(self, p=None, linear_jumps=None, t_psr=None):
+    def compute_linear_matrix(self, p=None, t_psr=None):
         debug("Computing linear matrix")
-        if linear_jumps is None:
-            linear_jumps = self.linear_jumps
         if p is None:
             p = self.best_parameters
         if t_psr is None:
             o = self.compute_orbit(p)
             t_psr = o['t_psr']
         t_psr_s = t_psr*86400.
-        At = [np.ones(len(t_psr_s)),
-                  t_psr_s/t_psr_s[-1],
-                  0.5*(t_psr_s/t_psr_s[-1])**2]
-        lp = ['tzrmjd','f0','f1']
-        if linear_jumps:
-            tl2 = list(self.tel_list)[:]
-            tl2.remove(self.tel_base)
-            tel_index = np.array([self.tel_list.index(t) for t in tl2])
-            for t in tel_index:
-                At.append(self.tels==t)
-                lp.append("j_"+self.tel_list[t])
-        A = np.array(At).T
-        assert len(lp)==A.shape[1]
-        return A, lp
+        return self.fit_matrix(t_psr_s)
 
-    def compute_linear_parts(self, p=None, linear_jumps=None, t_psr=None):
+    def compute_linear_parts(self, p=None, t_psr=None):
         debug("Computing linear parts")
-        A, lp = self.compute_linear_matrix(p,linear_jumps,t_psr)
+        A, lp = self.compute_linear_matrix(p,t_psr)
+        debug("fit matrix shape is %s", A.shape)
         b = self.pulses.copy()
         r = np.zeros(A.shape[1],dtype=np.float128)
         for i in range(3):
@@ -1197,37 +1154,7 @@ class Fitter(object):
             debug("residual %f" % np.sum((b/self.phase_uncerts)**2))
             debug("residual RMS %f" % np.sqrt(np.mean(b**2)))
             r += x
-        if t_psr is None:
-            o = self.compute_orbit(p)
-            t_psr = o['t_psr']
-        t_psr_s = t_psr*86400.
-        f0 = r[1]/t_psr_s[-1]
-        f1 = r[2]/t_psr_s[-1]**2
-        def err(tzrmjd_s):
-            phase = f0*t_psr_s+f1*t_psr_s**2/2.
-            phase -= f0*tzrmjd_s+f1*tzrmjd_s**2/2.
-            if linear_jumps:
-                for i, t in enumerate(tel_index):
-                    phase += r[3+i]*(self.tels==t)
-            rr = phase-self.pulses
-            rr /= self.phase_uncerts
-            return np.sum(rr**2)
-
-        debug("Minimizing to find tzrmjd")
-        # with this ridiculous tol value it runs until no further
-        # improvement is possible
-        tzrmjd_s = scipy.optimize.brent(err,
-            brack=(0,(self.mjds[-1])*86400),
-            tol=1e-160)
-
-        debug("done")
-        d = dict(f0=f0, f1=f1, tzrmjd_base=self.base_mjd,
-                    tzrmjd=tzrmjd_s/86400)
-        if linear_jumps:
-            for i,t in enumerate(tel_index):
-                n = "j_"+self.tel_list[t]
-                d[n] = p.get(n,0)-r[3+i]/f0
-        return d
+        return r, lp
 
     def lnprob(self, p, marginalize=True):
         """Return the log-likelihood of the fit"""
@@ -1273,62 +1200,36 @@ class Fitter(object):
         # FIXME: linear part?
         return len(self.mjds) - len(self.parameters)
 
+    def goodness_of_fit(self, argdict):
+        bp = self.best_parameters.copy()
+        bp.update(argdict)
+        return -2*self.efac**2*(self.lnprob(argdict, marginalize=False)
+                                +self.lnprior(argdict))
     def make_mfun(self):
-        args = ", ".join(self.parameters)
-        argdict = ("dict("
-                       + ", ".join("%s=%s" % (p,p) for p in self.parameters)
-                       + ", **moredict)")
-        #lamstr = ("lambda {args}: "
-        #    "np.sum((self.residuals({argdict})/self.phase_uncerts)**2)"
-        #    .format(**locals())
-        lamstr = ("lambda {args}: -2*self.efac**2*(self.lnprob({argdict}, "
-                      "marginalize=False)+self.lnprior({argdict}))"
-                      .format(**locals()))
-        #print lamstr
-        #print locals()
-        g = globals().copy()
-        g['self']=self
-        g['moredict'] = dict(
-            ppn_mode = self.ppn_mode,
-            matrix_mode = self.matrix_mode,
-            special = self.special,
-            general = self.general,
-            use_quad = self.use_quad,
-            shapiro = self.shapiro,
-            tol = self.tol,
-            #FIXME: not fitting for pm_x
-            pm_x = self.best_parameters.get('pm_x',0),
-            pm_y = self.best_parameters.get('pm_y',0),
-            )
-        return eval(lamstr, g)
+        outer_self = self
+        class Mfun:
+            def __init__(self):
+                self.parameters = outer_self.parameters
+                self.best_parameters = outer_self.best_parameters
+                self.outer_self = outer_self
+                class Thing: pass
+                self.func_code = Thing()
+                self.func_code.co_varnames = self.parameters
+                self.func_code.co_argcount = len(self.parameters)
+            def __call__(self, *args):
+                if len(args)!=len(self.parameters):
+                    raise ValueError("Fitter has %d parameters but you provided %d"
+                                 % (len(self.parameters), len(args)))
+                bp = self.best_parameters.copy()
+                for (p,v) in zip(self.parameters, args):
+                    bp[p] = v
+                return self.outer_self.goodness_of_fit(bp)
 
-    def fit(self, start=None, method="simplex"):
-        if start is None:
-            start = np.zeros(len(self.parameters))
-        last_offsets = start
-        console_print("\t\t|\t" + "\t".join([p for p in self.parameters]))
-        cache = {} # Powell often reuses points
-        def minfunc(offsets,last_offsets=last_offsets):
-            to = tuple(offsets)
-            if to in cache:
-                return cache[to]
-            p = self.best_parameters.copy()
-            for n,o in zip(self.parameters, offsets):
-                p[n] += o*self.best_errors[n]
-            r = -2*self.efac**2*(self.lnprob(p)+self.lnprior(p))
-            console_print("%.7g\t|\t" % r + "\t".join(["%.8g" % o for o in offsets-last_offsets]))
-            last_offsets[:]=offsets
-            cache[to] = r
-            return r
-        if method=="simplex":
-            # Something is wonky about the termination criteria
-            xopt = scipy.optimize.fmin(minfunc,start,ftol=1e-2,xtol=1.0)
-        elif method=="powell":
-            xopt = scipy.optimize.fmin_powell(minfunc,start,ftol=1e-6,xtol=0.1)
-        p = self.best_parameters.copy()
-        for n,o in zip(self.parameters, offsets):
-            p[n] += o*self.best_errors[n]
-        return p
+        return Mfun()
+
+
+
+# Future stuff
 
 class Model(object):
 
