@@ -124,7 +124,6 @@ def lnprob(offset):
     global j
     logger.debug("call %d" % j)
     j = j+1
-    efac = 1.3
     params = F.best_parameters.copy()
     if len(offset)!=len(F.parameters):
         raise ValueError("Parameter mismatch between walker and Fitter")
