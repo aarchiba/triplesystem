@@ -1228,6 +1228,16 @@ class Fitter(object):
         return Mfun()
 
 
+def hexplot(best_parameters, days, values, 
+            gridsize=(20,60)):
+    import matplotlib.pyplot as plt
+    xs = ((days-best_parameters["tasc_i"])/best_parameters["pb_i"]) % 1
+    ys = ((days-best_parameters["tasc_o"])/best_parameters["pb_o"])
+    p = plt.hexbin(xs, ys, values, gridsize=gridsize)
+    plt.xlim(0,1)
+    plt.xlabel("Inner orbital phase")
+    plt.ylabel("Outer orbital phase")
+    return p
 
 # Future stuff
 
