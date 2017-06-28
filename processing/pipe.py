@@ -780,7 +780,17 @@ zap = {
                   "-F","2100 2160",
                   "-F","2400 2600"),
         'PuMa2_350':(),
-        'PuMa2_1400':(),
+        'PuMa2_1400':(
+            "-F", "1458.00 1460.75",
+            "-F", "1438.00 1440.75",
+            "-F", "1418.00 1420.75",
+            "-F", "1398.00 1400.75",
+            "-F", "1378.00 1380.75",
+            "-F", "1358.00 1360.75",
+            "-F", "1338.00 1340.75",
+            "-F", "1318.00 1320.75",
+            "-F", "1298.00 1300.75",
+                  ),
     }
 
 def copy_if_newer(fi, fo):
@@ -864,16 +874,35 @@ def zap_rfi(meta, inpat, outpat, median_r):
         g = glob(join(work_dir, "*_%04d.ar.paz" % i))
         if g:
             fname, = g
-            zapchans, zapsubs = read_manual_zap(fname,nchan=meta["nchan"])
+            zapchans, zapsubs, zapblocks = read_manual_zap(fname,nchan=meta["nchan"])
             if zapchans:
                 zo.extend(("-z", " ".join(str(c) for c in zapchans)))
             if zapsubs:
                 zo.extend(("-w", " ".join(str(s) for s in zapsubs)))
+        else:
+            zapblocks = []
         if median_r is None:
             # FIXME: what happens if no manual or always zapping either?
             paz(fi, *zo, output=ft1)
         else:
             paz(fi, *zo, output=ft1, r=None, R=median_r)
+        for ((c_b, c_e), (s_b, s_e)) in zapblocks:
+            if s_b==s_e:
+                sub_cmd = "-w"
+                sub_arg = str(s_b)
+            else:
+                sub_cmd = "-W"
+                sub_arg = "%d %d" % (s_b, s_e)
+            if c_b==c_e:
+                chan_cmd = "-z"
+                chan_arg = str(c_b)
+            else:
+                chan_cmd = "-Z"
+                chan_arg = "%d %d" % (c_b, c_e)
+            subprocess.check_call(["paz", "-m", "-I", 
+                                   chan_cmd, chan_arg, 
+                                   sub_cmd, sub_arg,
+                                   ft1])
         if meta["tel"] in ["AO"]:
             F = psrchive.Archive_load(ft1)
             # from obsys.dat
@@ -964,31 +993,64 @@ def scrunch(meta, inpat, outpat, toa_bw, toa_time):
 def read_manual_zap(fname,nchan=None):
     zapchans = []
     zapsubs = []
+    zapblocks = []
     for l in open(fname).readlines():
         s = shlex.split(l)
-        for (i,k) in enumerate(s):
-            if k=="-z":
-                zapchans += [int(c) for c in s[i+1].split()]
-            elif k=="-w":
-                zapsubs += [int(c) for c in s[i+1].split()]
-            elif k=="-Z":
-                b,e = [int(c) for c in s[i+1].split()]
-                zapchans += range(b,e+1)
-            elif k=="-W":
-                b,e = [int(c) for c in s[i+1].split()]
-                zapsubs += range(b,e+1)
-            elif k in ["-f","-F","-x","-X","-E","-s","-S"]:
+        if "-I" in s:
+            # intersection of channels and subints
+            chan_range = None
+            sub_range = None
+            for (i,k) in enumerate(s):
+                if k=="-z":
+                    l = [int(c) for c in s[i+1].split()]
+                    if len(l) != 1 or chan_range is not None:
+                        raise ValueError("Command not understood: %s" % l)
+                    chan_range = l[0], l[0]
+                elif k=="-w":
+                    l = [int(c) for c in s[i+1].split()]
+                    if len(l) != 1 or sub_range is not None:
+                        raise ValueError("Command not understood: %s" % l)
+                    sub_range = l[0], l[0]
+                elif k=="-Z":
+                    b,e = [int(c) for c in s[i+1].split()]
+                    if chan_range is not None:
+                        raise ValueError("Command not understood: %s" % l)
+                    chan_range = b, e
+                elif k=="-W":
+                    b,e = [int(c) for c in s[i+1].split()]
+                    if sub_range is not None:
+                        raise ValueError("Command not understood: %s" % l)
+                    sub_range = b, e
+                elif k in ["-f","-F","-x","-X","-E","-s","-S"]:
+                    raise ValueError("Edit '%s' not supported" % k)
+            if chan_range is None or sub_range is None:
                 raise ValueError("Edit '%s' not supported" % k)
+            zapblocks.append((chan_range, sub_range))
+        else:
+            # union
+            for (i,k) in enumerate(s):
+                if k=="-z":
+                    zapchans += [int(c) for c in s[i+1].split()]
+                elif k=="-w":
+                    zapsubs += [int(c) for c in s[i+1].split()]
+                elif k=="-Z":
+                    b,e = [int(c) for c in s[i+1].split()]
+                    zapchans += range(b,e+1)
+                elif k=="-W":
+                    b,e = [int(c) for c in s[i+1].split()]
+                    zapsubs += range(b,e+1)
+                elif k in ["-f","-F","-x","-X","-E","-s","-S"]:
+                    raise ValueError("Edit '%s' not supported" % k)
     if nchan is not None:
         n = len(zapchans)
         zapchans = [c for c in zapchans if c<nchan]
         if len(zapchans)!=n:
             error("bogus channel detected in zap instructions, deleting and continuing")
-    if not zapchans and not zapsubs:
+    if not zapchans and not zapsubs and not zapblocks:
         raise ProcessingError("No zaps extracted from %s" % fname)
     zapchans.sort()
     zapsubs.sort()
-    return zapchans, zapsubs
+    return zapchans, zapsubs, zapblocks
 
 def process_observation(obs_dir, result_name,
                         work_dir=None,

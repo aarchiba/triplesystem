@@ -34,6 +34,7 @@ import scipy.optimize
 import scipy.linalg
 from numpy.fft import rfft, irfft, fft, ifft
 
+# FIXME: not needed
 from astropy.io import fits
 import psrchive
 
