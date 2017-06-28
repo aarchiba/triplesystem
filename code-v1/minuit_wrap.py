@@ -54,7 +54,7 @@ class Fitter(object):
                     self.stdout.write("\n")
 
                 if self.best_values is None or r<self.best_values_fval:
-                    self.best_values = call_values.copy()
+                    self.best_values = call_values[:]
                     self.best_values_fval = r
                     if self.best_filename is not None:
                         with open(self.best_filename,"wb") as f:

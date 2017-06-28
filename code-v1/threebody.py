@@ -256,7 +256,8 @@ def load_pipeline_toas(timfile,
     if t2outfile is None:
         t2outfile = ""
     if (os.path.exists(t2outfile) 
-        and os.path.getmtime(t2outfile)<os.path.getmtime(timfile)):
+        and (os.path.getmtime(t2outfile)<os.path.getmtime(timfile)
+             or os.path.getmtime(t2outfile)<os.path.getmtime(parfile))):
         info("tempo2 output appears to be old, deleting to trigger recomputation")
         os.unlink(t2outfile)
     try:
@@ -324,10 +325,11 @@ def load_pipeline_toas(timfile,
         if len(derivs[n])==0:
             continue
         derivs[n] = derivs[n][ix]
+    # FIXME: handle case when some TOAs don't make it into the list
     if pulses is None:
-        return t2_bats[ix], None, tel_list, tels[ix], errs[ix], derivs, ix
+        return t2_bats[ix], None, tel_list, tels[ix], errs[ix], derivs, ix, toa_info
     else:
-        return t2_bats[ix], pulses[ix], tel_list, tels[ix], errs[ix], derivs, ix
+        return t2_bats[ix], pulses[ix], tel_list, tels[ix], errs[ix], derivs, ix, toa_info
 
 
 
@@ -699,7 +701,7 @@ def report(F, correlations=True, correlation_threshold=0.5):
                     print n, m, c
 
 def lstsq(A, b):
-    """Solve a linear least-sqsuares problem
+    """Solve a linear least-squares problem
 
     This is meant to be a drop-in replacement for `scipy.linalg.lstsq`.
     The difference is that you can improve the condition number of A
@@ -709,10 +711,19 @@ def lstsq(A, b):
 
     Ascales = np.sqrt(np.sum(A**2,axis=0))
     As = A/Ascales[None,:]
-    xs, res, rk, s = scipy.linalg.lstsq(As, b)
-    if rk != A.shape[1]:
-        raise ValueError("Condition number still too bad; singular values are %s"
-                         % s)
+    db = b
+    xs = None
+    for i in range(3): # Slightly improve quality of fit
+        dxs, res, rk, s = scipy.linalg.lstsq(As, db)
+        if rk != A.shape[1]:
+            raise ValueError("Condition number still too bad; singular values are %s"
+                             % s)
+        if xs is None:
+            xs = dxs
+        else:
+            xs += dxs
+        db = b - np.dot(As, xs)
+        debug("Residual chi-squared: %s", np.sum(db**2))
     x = xs/Ascales # FIXME: test for multiple b
     return x, res, rk, s
 
@@ -860,7 +871,7 @@ class Fitter(object):
                 (self.mjds, self.pulses,
                  self.tel_list, self.tels,
                  self.uncerts, self.derivs,
-                 self.ix) = load_pipeline_toas(
+                 self.ix, self.toa_info) = load_pipeline_toas(
                      timfile=files+".tim",
                      parfile=self.parfile,
                      t2outfile=outname,
@@ -1104,22 +1115,12 @@ class Fitter(object):
         else: # linear_fit
             debug("Setting up linear least-squares fitting")
             b = self.pulses.copy()
-            for i in range(3):
-                debug("Linear least-squares iteration %d" % i)
-                x, rk, res, s = lstsq(
-                    A/self.phase_uncerts[:,None],
-                    b/self.phase_uncerts)
-                if not np.all(np.isfinite(x)):
-                    error("Warning: illegal value appeared "
-                              "in least-squares fitting: %s" % x)
-                    break
-                b -= np.dot(A,x)
-                debug("A[0]: %s b[0]: %s" % (A[0],b[0]))
-                debug("x: %s" % x)
-                debug("Least-squares singular values: %s", s)
-                debug("svdvals: %s", scipy.linalg.svdvals(A))
-                debug("Linear least-squares residual RMS %g"
-                          % np.sqrt(np.mean(b**2)))
+            x, rk, res, s = lstsq(
+                A/self.phase_uncerts[:,None],
+                b/self.phase_uncerts)
+            if not np.all(np.isfinite(x)):
+                error("Warning: illegal value appeared "
+                      "in least-squares fitting: %s" % x)
             debug("Done linear least-squares")
             if marginalize:
                 As = A/self.phase_uncerts[:,None]
@@ -1145,16 +1146,13 @@ class Fitter(object):
         debug("fit matrix shape is %s", A.shape)
         b = self.pulses.copy()
         r = np.zeros(A.shape[1],dtype=np.float128)
-        for i in range(3):
-            x, rk, res, s = scipy.linalg.lstsq(A/self.phase_uncerts[:,None],
-                                               b/self.phase_uncerts)
-            b -= np.dot(A,x)
-            debug("A[0]: %s b[0]: %s" % (A[0],b[0]))
-            debug("x: %s" % x)
-            debug("residual %f" % np.sum((b/self.phase_uncerts)**2))
-            debug("residual RMS %f" % np.sqrt(np.mean(b**2)))
-            r += x
-        return r, lp
+        x, rk, res, s = lstsq(A/self.phase_uncerts[:,None],
+                              b/self.phase_uncerts)
+        res = self.pulses - np.dot(A,x)
+        debug("final x: %s" % x)
+        debug("residual %f" % np.sum((res/self.phase_uncerts)**2))
+        debug("residual RMS %f" % np.sqrt(np.mean(res**2)))
+        return x, lp
 
     def lnprob(self, p, marginalize=True):
         """Return the log-likelihood of the fit"""
@@ -1226,6 +1224,29 @@ class Fitter(object):
                 return self.outer_self.goodness_of_fit(bp)
 
         return Mfun()
+
+    def annotated_toas(self, d):
+        """Return a list of TOAs annotated with key/value pairs from d
+
+        This list will be sorted into the order the TOAs appear in the
+        various functions here, that is, into chronological order by barycentered
+        arrival time.
+        """
+        if len(self.toa_info)!=len(self.mjds):
+            raise ValueError("Some TOAs were discarded; the code can't cope with this yet")
+        r = []
+        for i in range(len(self.mjds)):
+            i_t = self.ix[i]
+            t = self.toa_info[i_t].copy()
+            t["flags"] = t["flags"].copy()
+            u_F = 1e6*self.phase_uncerts[i]/self.reference_f0
+            u_t = t["uncert"]
+            assert np.abs(u_F-u_t)<1e-3, "association of TOA with result appears to be incorrect"
+            for (k,v) in d.items():
+                t["flags"][k] = str(v[i])
+            r.append(t)
+        return r
+            
 
 
 def hexplot(best_parameters, days, values, 
@@ -1309,7 +1330,6 @@ class Model(object):
             self.linear_parameters.append("DMX_%d" % i)
         for i in range(n_fd):
             self.linear_parameters.append("FD_%d" % i)
-
 
 class DataSet(object):
 
