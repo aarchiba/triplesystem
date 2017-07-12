@@ -16,7 +16,7 @@ import emcee
 import threebody
 
 jobid = os.environ.get('PBS_JOBID','local')
-dbdir = os.path.join('/home/aarchiba/projects/threebody/emcee-chains',jobid)
+dbdir = os.path.join('/data2/people/aarchiba/projects/triplesystem/code-v1/emcee-chains',jobid)
 try:
     os.mkdir(dbdir)
 except OSError:
@@ -42,80 +42,8 @@ trust_nfs = True
 n_steps = 100000
 
 logger.debug("creating Fitter")
-#mode = 'sep-2014-01'
-mode = 'file:emcee_params.pickle'
-#only_tels = ('AO1350','AO1440')
-#only_tels = ('GBT1500',)
-#only_tels = ('WSRT1400',)
-
-if mode=='GR':
-    fitter_params = dict(files="0337+17-scott-2013-08-29",
-                         parfile="0337_tempo2_pm.par",
-                         tzrmjd_middle='auto',
-                         fit_pos=True, fit_pm=False, fit_px=True,
-                         t2_astrometry=True,
-                         kopeikin=True,
-                         ppn_mode='GR')
-elif mode=='heavysimple':
-    fitter_params = dict(files="0337+17-scott-2013-08-29",tzrmjd_middle='auto',
-                         parfile="0337_tempo2_pm.par",
-                         fit_pos=True,
-                         fit_pm=False,
-                         fit_px=True,
-                         t2_astrometry=True,
-                         kopeikin=True,
-                         priors=('dbeta','dgamma'),
-                         ppn_mode='heavysimple')
-elif mode=='paper1':
-    fitter_params = dict(files="0337+17-scott-2013-06-06",
-                         parfile="0337_tempo2_nobinary.par",
-                         tzrmjd_middle='auto',
-                         fit_pos=False,
-                         fit_pm=False,
-                         fit_px=False,
-                         t2_astrometry=True,
-                         kopeikin=False,
-                         priors=(),
-                         ppn_mode=None)
-elif mode=='paper2':
-    fitter_params = dict(files="0337+17-scott-2013-06-06",
-                         parfile="0337_tempo2_nobinary.par",
-                         only_tels=only_tels,
-                         tzrmjd_middle='auto',
-                         fit_pos=False,
-                         fit_pm=False,
-                         fit_px=False,
-                         t2_astrometry=True,
-                         kopeikin=False,
-                         priors=(),
-                         ppn_mode=None)
-elif mode=='vlbi-2014-02':
-    fitter_params = dict(files="0337+17-anne-2014-02-04c",
-                         parfile="0337_tempo2_px_optical.par",
-                         tzrmjd_middle='auto',
-                         fit_pos=True,
-                         fit_pm=False,
-                         fit_px=False,
-                         t2_astrometry=True,
-                         kopeikin=False,
-                         priors=(),
-                         ppn_mode='GR')
-elif mode=='sep-2014-01':
-    fitter_params = dict(files="0337+17-anne-2014-02-04c",
-                         parfile="0337_tempo2_px_optical.par",
-                         tzrmjd_middle='auto',
-                         fit_pos=True,
-                         fit_pm=False,
-                         fit_px=False,
-                         t2_astrometry=True,
-                         kopeikin=False,
-                         priors=('dbeta','dgamma'),
-                         ppn_mode='heavysimple')
-elif mode.startswith("file"):
-    fn = mode.split(":")[1]
-    fitter_params = pickle.load(open(fn,"rb"))
-else:
-    raise ValueError("Unknown mode")
+fn = 'emcee_params.pickle'
+fitter_params = pickle.load(open(fn,"rb"))
 
 F = threebody.Fitter(**fitter_params)
 logger.debug("Fitter created")

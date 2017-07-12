@@ -265,7 +265,7 @@ def load_pipeline_toas(timfile,
     except IOError:
         e = os.environ.copy()
         e['TEMPO2'] = tempo2_dir
-        outline = "OUTPUT {bat} {freq} {err} {%s}\n"%("} {".join(astro_names))
+        outline = "OUTPUT {bat} {freqSSB} {err} {%s}\n"%("} {".join(astro_names))
         o = subprocess.check_output([tempo2_program,
             "-nobs", str(len(toa_info)+100),
             "-npsr", "1",
@@ -297,6 +297,7 @@ def load_pipeline_toas(timfile,
     if len(t2_bats) != len(toa_info):
         raise ValueError("tempo2 produced %d outputs but we found %d TOAs" % (len(t2_bats), len(toa_info)))
     pulses = np.zeros(len(toa_info),dtype=np.float128)
+    freqs = np.array(freqs, dtype=np.float128)
     for i,t in enumerate(toa_info):
         if "pn" in t["flags"]:
             pulses[i] = np.float128(t["flags"]["pn"])
@@ -334,12 +335,13 @@ def load_pipeline_toas(timfile,
 
 
 def trend_matrix(mjds, tel_list, tels,
-    const=True, jumps=True,
-    position=False, proper_motion=False, parallax=False,
-    derivs=None,
-    dm=False,
-    f0 = 365.9533436144258189, pepoch = 56100, mjdbase = 55920,
-    tel_base = 'WSRT1400'):
+                 const=True, jumps=True,
+                 position=False, proper_motion=False, parallax=False,
+                 derivs=None,
+                 dm=False,
+                 f0 = 365.9533436144258189, pepoch = 56100, mjdbase = 55920,
+                 tel_base = 'WSRT1400',
+                 fdn_range=None):
     """Build a matrix describing various linear parameters
 
     This function is chiefly valuable to express the effects of
@@ -727,6 +729,75 @@ def lstsq(A, b):
     x = xs/Ascales # FIXME: test for multiple b
     return x, res, rk, s
 
+def lstsq_with_errors(A,b,uncerts=None):
+    """Solve a linear least-squares problem and return uncertainties
+
+    This function extends `scipy.linalg.lstsq` in several ways: first,
+    it supports uncertainties on each row of the least-squares problem.
+    Second, `scipy.linalg.lstsq` fails if the scales of the fit
+    variables are very different. This function rescales them 
+    internally to improve the condition number. Finally, this function
+    returns an object containing information about the uncertainties
+    on the fit values; the `uncerts` attribute gives individual
+    uncertainties, the `corr` attribute is the matrix of correlations,
+    and the `cov` matrix is the full covariance matrix.
+    """
+    if len(A.shape)!=2:
+        raise ValueError
+    if uncerts is None:
+        Au = A
+        bu = b
+    else:
+        Au = A/uncerts[:,None]
+        bu = b/uncerts
+    Ascales = np.sqrt(np.sum(Au**2,axis=0))
+    #Ascales = np.ones(A.shape[1])
+    if np.any(Ascales==0):
+        raise ValueError("zero column (%s) in A" % np.where(Ascales==0))
+    As = Au/Ascales[None,:]
+    db = bu
+    xs = None
+    best_chi2 = np.inf
+    best_x = None
+    for i in range(5): # Slightly improve quality of fit
+        dxs, res, rk, s = scipy.linalg.lstsq(As, db)
+        if rk != A.shape[1]:
+            raise ValueError("Condition number still too bad; "
+                             "singular values are %s"
+                             % s)
+        if xs is None:
+            xs = dxs
+        else:
+            xs += dxs
+        db = bu - np.dot(As, xs)
+        chi2 = np.sum(db**2)
+        if chi2<best_chi2:
+            best_chi2 = chi2
+            best_x = xs
+        debug("Residual chi-squared: %s", np.sum(db**2))
+    x = best_x/Ascales # FIXME: test for multiple b
+    
+    class Result:
+        pass
+    r = Result()
+    r.x = x
+    r.residuals = b-np.dot(A,x)
+    if uncerts is None:
+        r.residuals_scaled = r.residuals
+    else:
+        r.residuals_scaled = r.residuals/uncerts
+    r.singular_values = s
+    r.chi2 = best_chi2
+    bias_corr = A.shape[0]/float(A.shape[0]-A.shape[1])
+    r.reduced_chi2 = bias_corr*r.chi2/A.shape[0]
+    Atas = np.dot(As.T, As)
+    covs = scipy.linalg.pinv(Atas)
+    r.cov = covs/Ascales[:,None]/Ascales[None,:]
+    r.uncerts = np.sqrt(np.diag(r.cov))
+    r.corr = r.cov/r.uncerts[:,None]/r.uncerts[None,:]
+    return r
+
+
 def load_best_parameter_database():
     with open("best-parameter-database.pickle","rb") as f:
        return pickle.load(f)
@@ -800,11 +871,11 @@ class Fitter(object):
         self.args = d
         bpd = load_best_parameter_database()
         try:
-            k = frozenset(d.iteritems())
+            self.bpd_k = frozenset(d.iteritems())
         except ValueError:
             raise ValueError("Unable to make hashable: %s" % d)
-        if k in bpd:
-            self.best_parameters = bpd[k]
+        if self.bpd_k in bpd:
+            self.best_parameters = bpd[self.bpd_k]
         else:
             logger.warn("best_parameters not found on disk (%d available)"
                             % len(bpd))
@@ -831,6 +902,16 @@ class Fitter(object):
         self.linear_jumps = linear_jumps
         self.linear_dm = linear_dm
         self.reference_f0 = reference_f0
+
+        self.physics = dict(ppn_mode=ppn_mode,
+                            matrix_mode=matrix_mode,
+                            special=special,
+                            general=general,
+                            use_quad=use_quad,
+                            tol=tol,
+                            shapiro=shapiro,
+                            kopeikin=kopeikin,
+                        )
 
         self.files = files
         try: # What is this?
@@ -1058,7 +1139,15 @@ class Fitter(object):
         self.last_p = None
         self.last_orbit = None
 
+        # clean out stray junk
+        self.best_parameters = {k:v for (k,v) in self.best_parameters.items() 
+                                if k in self.parameters}
+
     def compute_orbit(self, p):
+        np = self.physics.copy()
+        for pi in self.parameters:
+            np[pi] = p[pi]
+        p = np
         debug("Started compute_orbit for %s" % repr(p))
         if p!=self.last_p:
             debug("compute_orbit cache miss, running calculation")
@@ -1102,7 +1191,6 @@ class Fitter(object):
             p = self.best_parameters
         o = self.compute_orbit(p)
         t_psr_s = o['t_psr']*86400.
-        pulses = self.pulses - self.reference_f0*t_psr_s
         A, names = self.fit_matrix(t_psr_s)
         if not linear_fit:
             debug("Using linear values from parameters")
@@ -1114,7 +1202,7 @@ class Fitter(object):
                 return phase-self.pulses
         else: # linear_fit
             debug("Setting up linear least-squares fitting")
-            b = self.pulses.copy()
+            b = self.pulses
             x, rk, res, s = lstsq(
                 A/self.phase_uncerts[:,None],
                 b/self.phase_uncerts)
@@ -1122,14 +1210,15 @@ class Fitter(object):
                 error("Warning: illegal value appeared "
                       "in least-squares fitting: %s" % x)
             debug("Done linear least-squares")
+            r = b-np.dot(A,x)
             if marginalize:
                 As = A/self.phase_uncerts[:,None]
                 # FIXME: this can be done in long double 
                 # based on a matrix decomposition of As
                 s, m = np.linalg.slogdet(np.dot(As.T,As).astype(float))
-                return -b, 0.5*m
+                return r, 0.5*m
             else:
-                return -b
+                return r
     def compute_linear_matrix(self, p=None, t_psr=None):
         debug("Computing linear matrix")
         if p is None:
@@ -1145,7 +1234,6 @@ class Fitter(object):
         A, lp = self.compute_linear_matrix(p,t_psr)
         debug("fit matrix shape is %s", A.shape)
         b = self.pulses.copy()
-        r = np.zeros(A.shape[1],dtype=np.float128)
         x, rk, res, s = lstsq(A/self.phase_uncerts[:,None],
                               b/self.phase_uncerts)
         res = self.pulses - np.dot(A,x)
@@ -1154,12 +1242,37 @@ class Fitter(object):
         debug("residual RMS %f" % np.sqrt(np.mean(res**2)))
         return x, lp
 
-    def lnprob(self, p, marginalize=True):
+    def compute_linear_parts_with_errors(self, p=None, t_psr=None):
+        class Result:
+            pass
+        r = Result()
+        A, lp = self.compute_linear_matrix(p,t_psr)
+        r.names = lp
+        bu = self.pulses/self.phase_uncerts
+        Au = A/self.phase_uncerts[:,None]
+        x, rk, res, s = lstsq(Au, bu)
+        res = self.pulses - np.dot(A,x)
+        r.values = x
+        r.residuals = res
+        # FIXME: this is going to be a problem due to condition numbers
+        Ascales = np.sqrt(np.sum(Au**2,axis=0))
+        As = Au/Ascales[None,:]
+        cov = scipy.linalg.pinv(np.dot(As.T, As))/Ascales[:,None]/Ascales[None,:]
+        bias_corr = Au.shape[0]/(Au.shape[0]-len(r.names))
+        r.uncert = np.sqrt(np.diag(cov))
+        r.cov = cov
+        r.corr = cov/r.uncert[:,None]/r.uncert[None,:]
+        r.chi2 = np.sum((r.residuals/self.phase_uncerts)**2)
+        r.reduced_chi2 = r.chi2/(Au.shape[0]-Au.shape[1])
+        r.uncert_scaled = r.uncert*np.sqrt(r.reduced_chi2)
+        return r
+
+    def lnprob(self, p, marginalize=True, linear_fit=True):
         """Return the log-likelihood of the fit"""
         if marginalize:
-            r, m = self.residuals(p,marginalize=marginalize)
+            r, m = self.residuals(p,marginalize=marginalize, linear_fit=linear_fit)
         else:
-            r = self.residuals(p,marginalize=marginalize)
+            r = self.residuals(p,marginalize=marginalize, linear_fit=linear_fit)
             m = 0
         r = r/self.phase_uncerts/self.efac
         return -0.5*np.sum(r**2)-m
@@ -1198,10 +1311,11 @@ class Fitter(object):
         # FIXME: linear part?
         return len(self.mjds) - len(self.parameters)
 
-    def goodness_of_fit(self, argdict):
+    def goodness_of_fit(self, argdict=None, linear_fit=True):
         bp = self.best_parameters.copy()
-        bp.update(argdict)
-        return -2*self.efac**2*(self.lnprob(argdict, marginalize=False)
+        if argdict is not None:
+            bp.update(argdict)
+        return -2*self.efac**2*(self.lnprob(argdict, marginalize=False, linear_fit=linear_fit)
                                 +self.lnprior(argdict))
     def make_mfun(self):
         outer_self = self
@@ -1225,7 +1339,7 @@ class Fitter(object):
 
         return Mfun()
 
-    def annotated_toas(self, d):
+    def annotated_toas(self, d=None, residuals=None):
         """Return a list of TOAs annotated with key/value pairs from d
 
         This list will be sorted into the order the TOAs appear in the
@@ -1234,6 +1348,13 @@ class Fitter(object):
         """
         if len(self.toa_info)!=len(self.mjds):
             raise ValueError("Some TOAs were discarded; the code can't cope with this yet")
+        if d is None:
+            d = {}
+        if residuals is not None:
+            d['resid_phase'] = residuals.copy()
+            d['resid_s'] = residuals/self.reference_f0
+            d['day_bary'] = self.mjds.copy()
+            d['uncert_phase'] = self.phase_uncerts.copy()
         r = []
         for i in range(len(self.mjds)):
             i_t = self.ix[i]
@@ -1243,7 +1364,7 @@ class Fitter(object):
             u_t = t["uncert"]
             assert np.abs(u_F-u_t)<1e-3, "association of TOA with result appears to be incorrect"
             for (k,v) in d.items():
-                t["flags"][k] = str(v[i])
+                t["flags"][k] = v[i]
             r.append(t)
         return r
             
@@ -1254,7 +1375,8 @@ def hexplot(best_parameters, days, values,
     import matplotlib.pyplot as plt
     xs = ((days-best_parameters["tasc_i"])/best_parameters["pb_i"]) % 1
     ys = ((days-best_parameters["tasc_o"])/best_parameters["pb_o"])
-    p = plt.hexbin(xs, ys, values, gridsize=gridsize)
+    p = plt.hexbin(xs, ys, values, gridsize=gridsize, 
+                   extent=(0,1,np.amin(ys),np.amax(ys)))
     plt.xlim(0,1)
     plt.xlabel("Inner orbital phase")
     plt.ylabel("Outer orbital phase")
