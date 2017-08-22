@@ -22,8 +22,11 @@ def printoptions(*args, **kwargs):
         np.set_printoptions(**original)
 
 class Fitter(object):
-    def __init__(self, func, *args, **kwargs):
-        self.stdout = open('/dev/stdout', 'wt')
+    def __init__(self, func, output=None, *args, **kwargs):
+        if output is None:
+            self.stdout = open('/dev/stdout', 'wt')
+        else:
+            self.stdout = output
         fargs = func.func_code.co_varnames
         if fargs[0] == 'self':
             fargs = fargs[1:]
@@ -187,12 +190,15 @@ class Fitter(object):
             bv = self._normalize(*zip(*self.best_values))
             # These values are normalized
             x0 = np.array([v for (k,v) in bv])
-        # FIXME: do something sensible with the result
-        r = scipy.optimize.minimize(f, x0, method=method, **kwargs)
-        # The optimizer result object contains best values, but so
-        # does this object; we automatically keep best values ever seen
+        if method=="basinhopping":
+            scipy.optimize.basinhopping(f, x0, **kwargs)
+        else:
+            # FIXME: do something sensible with the result
+            r = scipy.optimize.minimize(f, x0, method=method, **kwargs)
+            # The optimizer result object contains best values, but so
+            # does this object; we automatically keep best values ever seen
 
-    def nlopt_minimize(self, optimizer=None, ftol_abs=1e-3):
+    def nlopt_minimize(self, optimizer=None, ftol_abs=1e-3, x0=None):
         import nlopt
         if optimizer is None:
             optimizer = nlopt.LN_BOBYQA
@@ -201,11 +207,48 @@ class Fitter(object):
             return float(self.wrapfunc2(*x))
         opt.set_min_objective(f)
         opt.set_ftol_abs(1e-3)
+        if x0 is None:
+            if self.best_values is None:
+                x0 = np.zeros(len(self.fargs))
+            else:
+                bv = self._normalize(*zip(*self.best_values))
+                # These values are normalized
+                x0 = np.array([v for (k,v) in bv])
+        #x = opt.optimize(list(x0.astype(float)))
+        x = opt.optimize(x0.astype(float))
+
+    def gp_minimize(self, size=10, **kwargs):
+        import skopt
+        def f(x):
+            return float(self.wrapfunc2(*x))
         if self.best_values is None:
             x0 = np.zeros(len(self.fargs))
         else:
             bv = self._normalize(*zip(*self.best_values))
             # These values are normalized
             x0 = np.array([v for (k,v) in bv])
-        #x = opt.optimize(list(x0.astype(float)))
-        x = opt.optimize(x0.astype(float))
+        dimensions = [(-float(size),float(size)) for i in range(len(x0))]
+        skopt.gp_minimize(f,dimensions,x0=x0,**kwargs)
+
+    def basinhopping_minimize(self):
+        def wrapped_bobyqa(fun, x0, args, kwargs, **options):
+            self.nlopt_minimize(x0=x0)
+            bv = self._normalize(*zip(*self.best_values))
+            # These values are normalized
+            x = np.array([v for (k,v) in bv])
+            return scipy.optimize.OptimizeResult(
+                x=x,
+                success=True,
+                status=0,
+                message="",
+                fun=self.best_values_fval,
+                jac=None,
+                hess=None,
+                hess_inv=None,
+                nfev=1,
+                njev=0,
+                nhev=0,
+                nit=1,
+                maxcv=0)
+        
+        pass

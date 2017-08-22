@@ -1,6 +1,6 @@
 import inspect
 import numpy as np
-from scipy.optimize import newton, fsolve
+from scipy.optimize import newton
 from scipy.linalg import block_diag
 import scipy.linalg
 

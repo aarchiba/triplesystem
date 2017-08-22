@@ -85,7 +85,7 @@ abbreviate_infos = {
 
 #              tempo2_program = '/home/aarchiba/software/tempo2/tempo2/tempo2',
 #              tempo2_dir = '/home/aarchiba/software/tempo2/t2dir',
-astro_names = ["d_RAJ","d_DECJ","d_PX","d_PMRA","d_PMDEC","d_DM"]
+astro_names = ["d_RAJ","d_DECJ","d_PX","d_PMRA","d_PMDEC","d_DM", "ipm"]
 def load_toas(timfile = '0337+17.tim',
               pulses = '0337+17.pulses',
               parfile = '0337_bogus.par',
@@ -328,20 +328,30 @@ def load_pipeline_toas(timfile,
         derivs[n] = derivs[n][ix]
     # FIXME: handle case when some TOAs don't make it into the list
     if pulses is None:
-        return t2_bats[ix], None, tel_list, tels[ix], errs[ix], derivs, ix, toa_info
+        return t2_bats[ix], None, tel_list, tels[ix], errs[ix], freqs[ix], derivs, ix, toa_info
     else:
-        return t2_bats[ix], pulses[ix], tel_list, tels[ix], errs[ix], derivs, ix, toa_info
+        return t2_bats[ix], pulses[ix], tel_list, tels[ix], errs[ix], freqs[ix], derivs, ix, toa_info
+
+def generate_dmx_epochs(mjds, dmx_span=30):
+    assert np.all(np.diff(mjds))>=0
+    dmx_epochs = []
+    for m in mjds:
+        if not dmx_epochs or m-dmx_epochs[-1]>dmx_span/2.:
+            dmx_epochs.append(m+dmx_span/2.)
+    return np.array(dmx_epochs)
 
 
-
-def trend_matrix(mjds, tel_list, tels,
+def trend_matrix(mjds, tel_list, tels, freqs,
                  const=True, jumps=True,
                  position=False, proper_motion=False, parallax=False,
                  derivs=None,
                  dm=False,
                  f0 = 365.9533436144258189, pepoch = 56100, mjdbase = 55920,
                  tel_base = 'WSRT1400',
-                 fdn_range=None):
+                 fdn_range=None,
+                 dmx_epochs=None,
+                 variable_ipm=None,
+                 variable_dm=None):
     """Build a matrix describing various linear parameters
 
     This function is chiefly valuable to express the effects of
@@ -378,6 +388,12 @@ def trend_matrix(mjds, tel_list, tels,
         names += new_names
         for n in new_names:
             non_orbital_basis.append(derivs[n])
+    if fdn_range is not None:
+        fdn_min, fdn_max = fdn_range
+        for i in range(fdn_min, fdn_max):
+            names.append("FD%d" % i)
+            # NB: freqs in Hz
+            non_orbital_basis.append(np.log(freqs/1e9)**i)
     if jumps:
         debug("base telescope %s from list of %s" % (tel_base,tel_list))
         tl2 = list(tel_list)[:]
@@ -385,6 +401,34 @@ def trend_matrix(mjds, tel_list, tels,
         tel_index = np.array([tel_list.index(t) for t in tl2])
         non_orbital_basis.append(tel_index[:,None]==tels[None,:])
         names += ["j_%s" % t for t in tl2]
+    if dmx_epochs is not None:
+        ipm = derivs["ipm"]
+        dmx_epochs = np.asarray(dmx_epochs)
+        ipm_basis = np.zeros((len(dmx_epochs),len(mjds)),np.longdouble)
+        dm_basis = np.zeros((len(dmx_epochs),len(mjds)),np.longdouble)
+        for i in range(len(mjds)):
+            j = np.searchsorted(dmx_epochs, mjds[i])
+            if j==0:
+                ipm_basis[j,i] = ipm[i]
+                dm_basis[j,i] = derivs['d_DM'][i]
+            elif j==len(dmx_epochs):
+                ipm_basis[j-1,i] = ipm[i]
+                dm_basis[j-1,i] = derivs['d_DM'][i]
+            else:
+                f = ((mjds[i]-dmx_epochs[j-1])
+                     /(dmx_epochs[j]-dmx_epochs[j-1]))
+                ipm_basis[j,i] = f*ipm[i]
+                dm_basis[j,i] = f*derivs['d_DM'][i]
+                ipm_basis[j-1,i] = (1-f)*ipm[i]
+                dm_basis[j-1,i] = (1-f)*derivs['d_DM'][i]
+        for j in range(len(dmx_epochs)):
+            if variable_dm:
+                non_orbital_basis.append(dm_basis[j])
+                names.append("DM_%04d" % j)
+            if variable_ipm:
+                non_orbital_basis.append(ipm_basis[j])
+                names.append("IPM_%04d" % j)
+
     non_orbital_basis = np.vstack(non_orbital_basis).T
     return non_orbital_basis, names
 
@@ -714,20 +758,23 @@ def lstsq(A, b):
     Ascales = np.sqrt(np.sum(A**2,axis=0))
     As = A/Ascales[None,:]
     db = b
-    xs = None
-    for i in range(3): # Slightly improve quality of fit
+    xs = np.zeros(As.shape[1], dtype=np.longdouble)
+    best_xs = None
+    best_chi2 = np.inf
+    for i in range(5): # Slightly improve quality of fit
         dxs, res, rk, s = scipy.linalg.lstsq(As, db)
         if rk != A.shape[1]:
             raise ValueError("Condition number still too bad; singular values are %s"
                              % s)
-        if xs is None:
-            xs = dxs
-        else:
             xs += dxs
         db = b - np.dot(As, xs)
-        debug("Residual chi-squared: %s", np.sum(db**2))
-    x = xs/Ascales # FIXME: test for multiple b
-    return x, res, rk, s
+        chi2 = np.sum(db**2)
+        if chi2<best_chi2:
+            best_xs = xs
+            best_chi2 = chi2
+        debug("Residual chi-squared: %s", )
+    x = best_xs/Ascales # FIXME: test for multiple b
+    return x, chi2, rk, s
 
 def lstsq_with_errors(A,b,uncerts=None):
     """Solve a linear least-squares problem and return uncertainties
@@ -856,6 +903,10 @@ class Fitter(object):
                  linear_dm=False,
                  priors=(),
                  toa_mode=None,
+                 fdn_range=None,
+                 dmx_span=90,
+                 variable_dm=False,
+                 variable_ipm=False,
                  reference_f0=365.95336876828094):
         """Set up a Fitter object
 
@@ -895,6 +946,7 @@ class Fitter(object):
         self.fit_pos = fit_pos
         self.fit_pm = fit_pm
         self.fit_px = fit_px
+        self.fdn_range = fdn_range
         self.parfile = parfile
         self.shapiro = shapiro
         self.t2_astrometry = t2_astrometry
@@ -951,7 +1003,8 @@ class Fitter(object):
             if toa_mode=="pipeline":
                 (self.mjds, self.pulses,
                  self.tel_list, self.tels,
-                 self.uncerts, self.derivs,
+                 self.uncerts, self.freqs,
+                 self.derivs,
                  self.ix, self.toa_info) = load_pipeline_toas(
                      timfile=files+".tim",
                      parfile=self.parfile,
@@ -968,10 +1021,7 @@ class Fitter(object):
                      t2outfile=outname,
                      base_mjd=self.base_mjd)
         else:
-            (self.mjds, self.pulses,
-             self.tel_list, self.tels,
-             self.uncerts, self.derivs,
-             self.ix) = load_toas(base_mjd=self.base_mjd)
+            raise ValueError("Must specify input files")
 
         self.tel_base = 'WSRT1400'
         if self.tel_base not in self.tel_list:
@@ -1017,15 +1067,15 @@ class Fitter(object):
         else:
             self.tzrmjd_base = 56100
 
-        self.best_errors = {'acosi_i': 8.32004394868322e-08,
-                            'acosi_o': 0.0001359635236049189,
-                            'asini_i': 1.1530594682594488e-08,
-                            'asini_o': 4.8118483561156396e-08,
-                            'delta_lan': 3.155351744198565e-06,
-                            'eps1_i': 1.2419019533035597e-08,
-                            'eps1_o': 2.6472518384964833e-10,
-                            'eps2_i': 1.6227860679295916e-08,
-                            'eps2_o': 4.069936482827143e-10,
+        self.best_errors = {'acosi_i': 1e-4,
+                            'acosi_o': 1e-2,
+                            'asini_i': 2e-7,
+                            'asini_o': 1e-5,
+                            'delta_lan': 7e-7,
+                            'eps1_i': 2e-7,
+                            'eps1_o': 5e-8,
+                            'eps2_i': 2e-8,
+                            'eps2_o': 2e-7,
                             'f0': 2.7807472559990485e-12,
                             'f1': 1.403655726176749e-19,
                             'j_AO1350': 3.0271232838711795e-07,
@@ -1035,15 +1085,15 @@ class Fitter(object):
                             'j_GBT350': 5.647246068277363e-07,
                             'j_GBT820': 1.5625781584242034e-07,
                             'j_WSRT350': 7.019612853617829e-07,
-                            'pb_i': 6.293362566635579e-11,
-                            'pb_o': 6.319266859013128e-08,
-                            'q_i': 1.077186204690244e-08,
-                            'tasc_i': 7.451846424579363e-09,
-                            'tasc_o': 3.5744992868852454e-08,
+                            'pb_i': 6e-7,
+                            'pb_o': 1e-4,
+                            'q_i': 3e-6,
+                            'tasc_i': 6e-8,
+                            'tasc_o': 1e-4,
                             'tzrmjd': 6.894185939775915e-13,
-                            'delta': 1e-8,
-                            'dgamma': 1e-4,
-                            'dbeta': 1e-4,
+                            'delta': 2e-7,
+                            'dgamma': 2e-5,
+                            'dbeta': 2e-3,
                             'dmbeta': 1e-4,
                             'dmpbeta': 1e-4,
                             'dlambda': 1e-4,
@@ -1122,16 +1172,22 @@ class Fitter(object):
             derivs=self.derivs
         else:
             derivs=None
+        self.dmx_span = dmx_span
+        self.dmx_epochs = generate_dmx_epochs(self.mjds, dmx_span) 
         self.jmatrix, self.jnames = trend_matrix(
-            self.mjds, self.tel_list, self.tels,
+            self.mjds, self.tel_list, self.tels, self.freqs,
             tel_base=self.tel_base,
             position=self.fit_pos,
             proper_motion=self.fit_pm,
             parallax=self.fit_px,
             derivs=self.derivs,
             dm=self.linear_dm,
+            fdn_range=self.fdn_range,
             const=True, 
-            jumps=True)
+            jumps=True,
+            dmx_epochs=self.dmx_epochs,
+            variable_dm=variable_dm,
+            variable_ipm=variable_ipm)
 
         if not self.linear_jumps:
             self.parameters += self.jnames
@@ -1146,7 +1202,11 @@ class Fitter(object):
     def compute_orbit(self, p):
         np = self.physics.copy()
         for pi in self.parameters:
-            np[pi] = p[pi]
+            try:
+                np[pi] = p[pi]
+            except KeyError:
+                info("Missing key in parameters: %s" % pi)
+                np[pi] = 0.
         p = np
         debug("Started compute_orbit for %s" % repr(p))
         if p!=self.last_p:
@@ -1215,7 +1275,13 @@ class Fitter(object):
                 As = A/self.phase_uncerts[:,None]
                 # FIXME: this can be done in long double 
                 # based on a matrix decomposition of As
-                s, m = np.linalg.slogdet(np.dot(As.T,As).astype(float))
+                # At least handling the constants separately would help
+                #s, m = np.linalg.slogdet(np.dot(As.T,As).astype(float))
+                # This is better
+                scales = np.sum(As**2,axis=0)
+                As2 = As/scales[None,:]
+                s = scipy.linalg.svdvals(As2)
+                m = 2*np.sum(np.log(scales)+np.log(s))
                 return r, 0.5*m
             else:
                 return r
@@ -1277,7 +1343,7 @@ class Fitter(object):
         r = r/self.phase_uncerts/self.efac
         return -0.5*np.sum(r**2)-m
 
-    def lnprior(self, p):
+    def lnprior(self, p=None):
         """Return the log-likelihood of the prior
 
         Under normal operation, an MCMC algorithm simply adds the
@@ -1289,17 +1355,19 @@ class Fitter(object):
         These priors are based on independent measurements, in most
         cases from previous GR tests.
         """
+        if p is None:
+            p = self.best_parameters
         l = 0
         if 'dbeta' in self.priors: # Mercury periastron advance
-            l += (p['dbeta']/3e-3)**2
+            l += (p.get('dbeta',0)/3e-3)**2
         if 'dgamma' in self.priors: # Cassini tracking
-            l += (p['dgamma']/2.3e-5)**2
+            l += (p.get('dgamma',0)/2.3e-5)**2
         if 'delta' in self.priors: # wide binary MSPs
-            l += (p['delta']/6e-3)**2
+            l += (p.get('delta',0)/6e-3)**2
         if 'pm_x' in self.priors: # 250 km/s
-            l += (p['pm_x']/1e-9)**2
+            l += (p.get('pm_x',0)/1e-9)**2
         if 'pm_y' in self.priors: # 250 km/s
-            l += (p['pm_y']/1e-9)**2
+            l += (p.get('pm_y',0)/1e-9)**2
         return -l/2.
 
     def chi2(self, p):
@@ -1381,6 +1449,20 @@ def hexplot(best_parameters, days, values,
     plt.xlabel("Inner orbital phase")
     plt.ylabel("Outer orbital phase")
     return p
+
+def tplot(F, values, uncerts=None, days=None):
+    import matplotlib.pyplot as plt
+    if days is None:
+        days = F.mjds
+    for (i,t) in enumerate(F.tel_list):
+        c = F.tels == i
+        if not np.any(c):
+            continue
+        if uncerts is None:
+            plt.plot(days[c], values[c], ".", label=t)
+        else:
+            plt.errorbar(days[c], values[c], uncerts[c], linestyle="none", label=t)
+    plt.xlabel("time (days)")
 
 # Future stuff
 
