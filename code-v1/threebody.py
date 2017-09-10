@@ -518,7 +518,7 @@ def compute_orbit(parameter_dict, times, keep_states=True):
         bbats = bbats[ix]
 
     debug("setting up RHS")
-    if ppn_mode is None:
+    if ppn_mode is None or ppn_mode=="newtondelta":
         rhs = quad_integrate.KeplerRHS(special=special, general=general,
                                        delta=delta,pm_x=pm_x,pm_y=pm_y,
                                        time_reciprocal=time_reciprocal)
@@ -542,7 +542,7 @@ def compute_orbit(parameter_dict, times, keep_states=True):
             Gamma011=(1+dmpbeta), Gamma012=(1+dmpbeta), Gamma022=(1+dmpbeta),
             Gamma100=(1+dlambda), Gamma102=(1+dmbeta), Gamma122=1,
             Gamma200=(1+dlambda), Gamma201=(1+dmbeta), Gamma211=1,
-            ppn_motion=True,matrix_mode=matrix_mode,pm_x=pm_x,pm_y=pm_y,
+            ppn_motion=True,matrix_mode=matrix_mode,+pm_x=pm_x,pm_y=pm_y,
                                        time_reciprocal=time_reciprocal)
     elif ppn_mode=='heavysimple':
         delta = parameter_dict['delta'] # M(G) = (1+delta) M(I)
@@ -1018,6 +1018,8 @@ class Fitter(object):
             self.parameters.extend(['delta','dgamma','dbeta'])
         elif ppn_mode=='GRtidal':
             self.parameters.extend(['Omega','Rc','k2'])
+        elif ppn_mode=='newtondelta':
+            self.parameters.extend(['delta'])
         self.best_parameters['use_quad'] = self.use_quad
         self.best_parameters['tol'] = self.tol
         if self.tzrmjd_base is None:
