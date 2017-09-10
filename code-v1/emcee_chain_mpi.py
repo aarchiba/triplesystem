@@ -41,6 +41,10 @@ trust_nfs = True
 
 n_steps = 100000
 
+logger.debug("Process of rank %s running on host %s", 
+             os.environ['OMPI_COMM_WORLD_RANK'],
+             os.environ["HOST"])
+logger.debug("Environment: %s", os.environ)
 logger.debug("creating Fitter")
 fn = 'emcee_params.pickle'
 fitter_params = pickle.load(open(fn,"rb"))
@@ -57,6 +61,11 @@ def lnprob(offset):
         raise ValueError("Parameter mismatch between walker and Fitter")
     for p,o in zip(F.parameters, offset):
         params[p] += o
+    if False:
+        with open("%s/eval-params-%s-%d" 
+                  % (dbdir,os.environ["OMPI_COMM_WORLD_RANK"], j-1), 
+                  "wb") as f:
+            pickle.dump(params,f)
     logger.debug("started lnprob computation")
     r = F.lnprob(params)
     logger.debug("finished lnprob computation with %s" % r)
@@ -64,6 +73,7 @@ def lnprob(offset):
     extra_info['linear_part'] = F.compute_linear_parts(params)
     for op in ['initial_values', 'time', 'n_evaluations', 'parameter_dict']:
         extra_info[op] = F.last_orbit[op]
+    logger.debug("lnprob done, returning %s and awaiting command", r)
     return r, extra_info
 def lnprior(offset):
     params = F.best_parameters.copy()

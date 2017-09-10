@@ -762,17 +762,22 @@ def lstsq(A, b):
     best_xs = None
     best_chi2 = np.inf
     for i in range(5): # Slightly improve quality of fit
+        if not np.all(np.isfinite(db)):
+            raise ValueError("RHS in least-squares fit invalid")
+        debug("Calling scipy.linalg.lstsq")
         dxs, res, rk, s = scipy.linalg.lstsq(As, db)
+        debug("scipy.linalg.lstsq returned")
         if rk != A.shape[1]:
             raise ValueError("Condition number still too bad; singular values are %s"
                              % s)
-            xs += dxs
+        xs += dxs
         db = b - np.dot(As, xs)
         chi2 = np.sum(db**2)
         if chi2<best_chi2:
             best_xs = xs
             best_chi2 = chi2
-        debug("Residual chi-squared: %s", )
+        debug("Residual chi-squared: %s", chi2)
+    debug("lstsq done")
     x = best_xs/Ascales # FIXME: test for multiple b
     return x, chi2, rk, s
 
