@@ -350,6 +350,9 @@ def load_pipeline_toas(
 
 
 def generate_dmx_epochs(mjds, dmx_span=30):
+    ds = np.array(dmx_span)
+    if len(ds.shape)==1:
+        return ds.astype(np.longdouble)
     assert np.all(np.diff(mjds)) >= 0
     dmx_epochs = []
     for m in mjds:
@@ -441,7 +444,7 @@ def trend_matrix(mjds, tel_list, tels, freqs,
                 ipm_basis[j-1, i] = (1-f)*ipm[i]
                 dm_basis[j-1, i] = (1-f)*derivs['d_DM'][i]
         for j in range(len(dmx_epochs)):
-            if variable_dm:
+            if variable_dm and j > 0:
                 non_orbital_basis.append(dm_basis[j])
                 names.append("DM_%04d" % j)
             if variable_ipm:
@@ -856,8 +859,9 @@ def lstsq_with_errors(A, b, uncerts=None):
         dxs, res, rk, s = scipy.linalg.lstsq(As, db)
         if rk != A.shape[1]:
             raise ValueError("Condition number still too bad; "
-                             "singular values are %s"
-                             % s)
+                             "singular values are %s and rank "
+                             "should be %d"
+                             % (s, A.shape[1]))
         if xs is None:
             xs = dxs
         else:
@@ -1492,6 +1496,8 @@ class Fitter(object):
                              "can't cope with this yet")
         if d is None:
             d = {}
+        else:
+            d = d.copy()
         if residuals is not None:
             d['resid_phase'] = residuals.copy()
             d['resid_s'] = residuals/self.reference_f0
