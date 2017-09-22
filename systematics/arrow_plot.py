@@ -13,8 +13,9 @@ from matplotlib.font_manager import FontProperties
 
 def arrow_plot(par_dict, mjd, phase, unc):
     """ par_dict is dictionary with Best_parameters.
-IMPORTANT!!! You should call arrow_plot with phase*scl, unc*scl, where scl is 0.00273*1e6. In such, arrow unit will be micro seconds.
-I'll think how too make it better..."""	
+mjd is mjd, phase is residuals and unc is its uncertainty (units is phase of the pulsar!)
+This function gives you the arrow plot and the VALUE of the biggest arrow in MICRO SECONDS
+value=arrow_plot(par_dict, mjd, phase, unc)"""
     #-----function-1 --- make a matrix
     ############################################
     #input:
@@ -145,7 +146,11 @@ I'll think how too make it better..."""
         err_red=np.array([191, 54, 12])/255.0
         plt.figtext(0.15,0.2, r'the longest arrow = %4.3f $\mu$s'%(ar_scale), fontproperties=font0, color=err_red)
         return ar_scale
-        
-    draw_nocb_plot(par_dict, 4, mjd, phase, unc)
     
-    return
+
+    
+    p_period=0.00273258863228
+    scl=p_period*1e6
+    value=draw_nocb_plot(par_dict, 4, mjd, phase*scl, unc*scl)
+    
+    return value
