@@ -12,7 +12,9 @@ from scipy import stats
 from matplotlib.font_manager import FontProperties
 
 def arrow_plot(par_dict, mjd, phase, unc):
-
+    """ par_dict is dictionary with Best_parameters.
+IMPORTANT!!! You should call arrow_plot with phase*scl, unc*scl, where scl is 0.00273*1e6. In such, arrow unit will be micro seconds.
+I'll think how too make it better..."""	
     #-----function-1 --- make a matrix
     ############################################
     #input:
