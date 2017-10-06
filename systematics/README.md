@@ -1,4 +1,4 @@
-There are a few functions which do some systematics search
+There are a few functions which do some systematics search.
 
 ##############
 1)plotter_fun.py
