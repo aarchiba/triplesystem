@@ -24,7 +24,7 @@ Acols - max number of inner orbital frequencies to calculate
 mjd, phase, unc - parameters of data'''
     pl=pltr.plotter(par_dict, Acols, mjd, phase, unc)
     if scale is None:
-        ar_scale=np.amax(pl.M)
+        ar_scale=np.amax(np.hypot(pl.V, pl.U))
     else:
         ar_scale=scale
     for k in range(0,len(pl.err_X)):
@@ -46,7 +46,7 @@ def coeff_plot(pl, scale=None):
        Returns: value of the biggest arrow and plot
 pl - object with arrow coordinates, directions and lenghts'''    
     if scale is None:
-        ar_scale=np.amax(pl.M)
+        ar_scale=np.amax(np.hypot(pl.V, pl.U))
     else:
         ar_scale=scale
     for k in range(0,len(pl.err_X)):
