@@ -17,20 +17,20 @@ err_red=np.array([191, 54, 12])/255.0
 err_bl=np.array([21, 101, 192])/255.0
 
 
-def draw_plot(par_dict, Acols, mjd, phase, unc, scale=None, plot_unc=True):
+def draw_plot(par_dict, Acols, mjd, phase, unc, scale=None, plot_unc=True, color=err_bl):
     '''Makes arrow plot for a given data set.
        Returns: value of the biggest arrow and plot
 par_dict - dictionary with pulsar parameters
 Acols - max number of inner orbital frequencies to calculate
-mjd, phase, unc - parameters of data'''
+mjd, phase, unc - parameters of data (in units you want to get your arrow lenghts in)'''
     pl=pltr.plotter(par_dict, Acols, mjd, phase, unc)
-    return coeff_plot(pl,scale=scale, plot_unc=plot_unc)
+    return coeff_plot(pl,scale=scale, plot_unc=plot_unc, color=color)
 
-def coeff_plot(pl, scale=None, plot_unc=True):
+def coeff_plot(pl, scale=None, plot_unc=True, color=err_bl):
     '''Makes arrow plot for a given (arrow_coeff) object.
        Takes: (arrow_coeff) object. 
-       Returns: value of the biggest arrow and plot
-pl - object with arrow coordinates, directions and lenghts'''
+       Returns: value of the biggest arrow in input units and draws plot
+pl - object with arrow coordinates, directions and lenghts (input your units)'''
     if scale is None:
         ar_scale=np.amax(pl.M)
     else:
@@ -38,8 +38,8 @@ pl - object with arrow coordinates, directions and lenghts'''
     if plot_unc:
         for k in range(0,len(pl.err_X)):
             i,j = pl.err_ix[k]
-            plt.plot(pl.err_X[k]/ar_scale+j,pl.err_Y[k]/ar_scale+i, color=err_bl, lw=1, alpha=0.3)
-    Q = plt.quiver(pl.X, pl.Y, pl.U, pl.V, units='x', scale=ar_scale, color=err_bl)
+            plt.plot(pl.err_X[k]/ar_scale+j,pl.err_Y[k]/ar_scale+i, color=color, lw=1, alpha=0.3)
+    Q = plt.quiver(pl.X, pl.Y, pl.U, pl.V, units='x', scale=ar_scale, color=color)
     plt.xlim(-Acols+0.05,Acols-0.05)
     plt.ylim(-0.95,Acols-0.05)
     plt.xlabel('Inner orbit frequencies')
