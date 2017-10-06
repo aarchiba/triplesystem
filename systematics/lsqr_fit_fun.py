@@ -14,7 +14,7 @@ def linear_least_squares_cov(par_dict, Acols, mjd, phase, unc):
     res = phase-np.dot(A.A,x)
     Ascaled = A.A/unc[:,np.newaxis]
 
-    cov = np.linalg.pinv(np.dot(Ascaled.T,Ascaled))
+    cov = scipy.linalg.pinv(np.dot(Ascaled.T,Ascaled))
     n=len(phase)
     cov_scaled = cov*chi2/n
 
@@ -26,7 +26,7 @@ def linear_least_squares_cov(par_dict, Acols, mjd, phase, unc):
     r.chi2 = chi2
     r.rk = rk
     r.s = s
-    r.res = rescov = np.linalg.pinv(np.dot(Ascaled.T,Ascaled))
+    r.res = rescov = scipy.linalg.pinv(np.dot(Ascaled.T,Ascaled))
     n=len(phase)
     r.A = A
     r.Adict = Adict
