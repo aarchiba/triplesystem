@@ -46,6 +46,6 @@ pl - object with arrow coordinates, directions and lenghts'''
     plt.ylabel('Outer orbit frequencies')
     plt.gca().set_aspect('equal')
     err_red=np.array([191, 54, 12])/255.0
-    plt.figtext(0.15,0.2, r'the longest arrow = %4.3f $\mu$s'%(ar_scale), fontproperties=font0, color=err_red)
+    plt.figtext(0.15,0.2, r'the longest arrow = %f $\mu$s'%(ar_scale), fontproperties=font0, color=err_red)
     return ar_scale
 
