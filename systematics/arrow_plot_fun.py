@@ -32,7 +32,7 @@ def coeff_plot(pl, scale=None, plot_unc=True, color=err_bl, units=''):
        Returns: value of the biggest arrow in input units and draws plot
 pl - object with arrow coordinates, directions and lenghts (input your units)'''
     if scale is None:
-        ar_scale=np.amax(pl.M)
+        ar_scale=np.amax(np.hypot(pl.V,pl.U))
     else:
         ar_scale=scale
     if plot_unc:
