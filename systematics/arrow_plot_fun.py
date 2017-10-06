@@ -40,6 +40,7 @@ pl - object with arrow coordinates, directions and lenghts (input your units)'''
             i,j = pl.err_ix[k]
             plt.plot(pl.err_X[k]/ar_scale+j,pl.err_Y[k]/ar_scale+i, color=color, lw=1, alpha=0.3)
     Q = plt.quiver(pl.X, pl.Y, pl.U, pl.V, units='x', scale=ar_scale, color=color)
+    Acols=np.amax(pl.X)+1
     plt.xlim(-Acols+0.05,Acols-0.05)
     plt.ylim(-0.95,Acols-0.05)
     plt.xlabel('Inner orbit frequencies')
