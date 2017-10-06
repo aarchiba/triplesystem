@@ -428,8 +428,10 @@ def trend_matrix(mjds, tel_list, tels, freqs,
         dmx_epochs = np.asarray(dmx_epochs)
         ipm_basis = np.zeros((len(dmx_epochs), len(mjds)), np.longdouble)
         dm_basis = np.zeros((len(dmx_epochs), len(mjds)), np.longdouble)
+        max_j = -1
         for i in range(len(mjds)):
             j = np.searchsorted(dmx_epochs, mjds[i])
+            max_j = max(j, max_j)
             if j == 0:
                 ipm_basis[j, i] = ipm[i]
                 dm_basis[j, i] = derivs['d_DM'][i]
@@ -443,7 +445,7 @@ def trend_matrix(mjds, tel_list, tels, freqs,
                 dm_basis[j, i] = f*derivs['d_DM'][i]
                 ipm_basis[j-1, i] = (1-f)*ipm[i]
                 dm_basis[j-1, i] = (1-f)*derivs['d_DM'][i]
-        for j in range(len(dmx_epochs)):
+        for j in range(max_j):
             if variable_dm and j > 0:
                 non_orbital_basis.append(dm_basis[j])
                 names.append("DM_%04d" % j)
@@ -642,6 +644,8 @@ def compute_orbit(parameter_dict, times, keep_states=True):
             ppn_motion=True, matrix_mode=matrix_mode,
             pm_x=pm_x, pm_y=pm_y,
             time_reciprocal=time_reciprocal)
+    else:
+        raise ValueError("PPN mode %s not found" % ppn_mode)
     if special or general:
         initial_values = np.concatenate((initial_values, [0]))
     debug("Constructing ODE integrator")
@@ -799,6 +803,8 @@ def lstsq(A, b):
     """
 
     Ascales = np.sqrt(np.sum(A**2, axis=0))
+    # Fix bogus columns; tcondition number error is more clear
+    Ascales[Ascales == 0] = 1
     As = A/Ascales[None, :]
     db = b
     xs = np.zeros(As.shape[1], dtype=np.longdouble)
