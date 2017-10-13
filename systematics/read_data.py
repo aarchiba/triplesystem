@@ -52,7 +52,7 @@ def day_to_year(mjd):
     return (mjd-mjd_year)/365.2425+year_mjd
 
 
-def plot_res(data,name,color,scl=None):
+def plot_res(data, mjd, phase, unc, name, color='b',scl=None):
     base_mjd=data['base_mjd']    
     bp = data["best_parameters"]
     #p_period=1./bp['f0']
@@ -115,8 +115,8 @@ def plot_res(data,name,color,scl=None):
             face_clr=np.array([142, 68, 173])/255.0
             mec_clr=np.array([74, 35, 90])/255.0
             
-        ax1.errorbar(tel.mjd, tel.phase*scale, 
-                     yerr=tel.unc*scale, 
+        ax1.errorbar(mjd[tel.index], phase[tel.index]*scale, 
+                     yerr=unc[tel.index]*scale, 
                      marker="o", 
                      linestyle='none', 
                      mec=mec_clr, 
@@ -160,4 +160,41 @@ def plot_res(data,name,color,scl=None):
     print ax2.get_xlim()
     
     plt.gcf().set_size_inches(im_width,im_width*4./15.)
+
     return
+
+def plot_hex(par_dict, mjd,res,size):
+    pb_i = par_dict['pb_i']
+    pb_o = par_dict['pb_o']
+    plt.set_cmap('coolwarm')
+    plt.hexbin((mjd/pb_i)%1, mjd/pb_o,res,size)
+    plt.xlabel("inner phase")
+    plt.ylabel("outer orbits")
+    plt.rc('xtick', labelsize=10)
+    plt.rc('ytick', labelsize=10)
+    plt.colorbar(label=r'$\mu$s')
+
+#Function to fit normal distribution to it and plot it
+def fit_plot(emac, number, name, color, numplots, limm):
+    mu, std = norm.fit(emac)
+    ax=plt.subplot(2, int(numplots/2), number)
+    ax.hist(emac, bins=100, normed=True, alpha=0.6, color=color)
+    xmin, xmax = plt.xlim()
+    x = np.linspace(xmin, xmax, 100)
+    p = norm.pdf(x, mu, std)
+    ax.plot(x, p, 'k', linewidth=2)
+    ax.set_xlabel(r'$\mu$ = %.4f,  $\sigma$ = %.4f'%(mu, std), fontsize=20)
+    ax.set_ylabel('res/unc', fontsize=20)
+    ax.set_xlim(-limm,limm)
+    if number%2:
+        xx=0.13
+    else:
+        xx=0.55
+    if (number >2.5):
+        yy=0.45
+    else:
+        yy=0.87
+    plt.figtext(xx,yy, '%s'%name, fontsize=20, color=color)
+    return std
+
+

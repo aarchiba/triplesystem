@@ -192,5 +192,80 @@ mjd, phase, unc - parameters of data (in units you want to get your arrow lenght
     pl=plotter(par_dict, Acols, mjd, phase, unc)
     return coeff_plot(pl,scale=scale, plot_unc=plot_unc, color=color, units=units, lentext=lentext)
 
+def lstsq_with_errors(A,b,uncerts=None):
+    """Solve a linear least-squares problem and return uncertainties
+
+    This function extends `scipy.linalg.lstsq` in several ways: first,
+    it supports uncertainties on each row of the least-squares problem.
+    Second, `scipy.linalg.lstsq` fails if the scales of the fit
+    variables are very different. This function rescales them 
+    internally to improve the condition number. Finally, this function
+    returns an object containing information about the uncertainties
+    on the fit values; the `uncerts` attribute gives individual
+    uncertainties, the `corr` attribute is the matrix of correlations,
+    and the `cov` matrix is the full covariance matrix.
+    """
+    if len(A.shape)!=2:
+        raise ValueError
+    if uncerts is None:
+        Au = A
+        bu = b
+    else:
+        Au = A/uncerts[:,None]
+        bu = b/uncerts
+    Ascales = np.sqrt(np.sum(Au**2,axis=0))
+    #Ascales = np.ones(A.shape[1])
+    if np.any(Ascales==0):
+        raise ValueError("zero column (%s) in A" % np.where(Ascales==0))
+    As = Au/Ascales[None,:]
+    db = bu
+    xs = None
+    best_chi2 = np.inf
+    best_x = None
+    for i in range(5): # Slightly improve quality of fit
+        dxs, res, rk, s = scipy.linalg.lstsq(As, db)
+        if rk != A.shape[1]:
+            raise ValueError("Condition number still too bad; "
+                             "singular values are %s"
+                             % s)
+        if xs is None:
+            xs = dxs
+        else:
+            xs += dxs
+        db = bu - np.dot(As, xs)
+        chi2 = np.sum(db**2)
+        if chi2<best_chi2:
+            best_chi2 = chi2
+            best_x = xs
+        #debug("Residual chi-squared: %s", np.sum(db**2))
+    x = best_x/Ascales # FIXME: test for multiple b
+    
+    class Result:
+        pass
+    r = Result()
+    r.x = x
+    r.chi2 = best_chi2
+    bias_corr = A.shape[0]/float(A.shape[0]-A.shape[1])
+    r.reduced_chi2 = bias_corr*r.chi2/A.shape[0]
+    Atas = np.dot(As.T, As)
+    covs = scipy.linalg.pinv(Atas)
+    r.cov = covs/Ascales[:,None]/Ascales[None,:]
+    r.uncerts = np.sqrt(np.diag(r.cov))
+    r.corr = r.cov/r.uncerts[:,None]/r.uncerts[None,:]
+    return r
 
 
+def der_of_par(data, par, unc):
+    d=np.array(data['derivatives'])[np.newaxis][0]
+    cols= sorted(d.keys())
+    print np.shape(cols)
+
+    del cols[cols.index(par)]
+    A = np.array([d[c] for c in cols]).T
+
+    print A.shape
+    b=d[par]
+
+    r = lstsq_with_errors(A, b, unc)
+    der_par=(b-np.dot(A,r.x))
+    return der_par
