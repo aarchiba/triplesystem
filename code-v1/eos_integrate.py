@@ -5,9 +5,12 @@ import scipy.integrate
 
 pi = np.pi
 
-c = 3e10          # cgs
-G = 6.67408e-8    # cgs units
-rho_nuc = 2e14    # nuclear density; just a scaling
+c = 3e10            # cgs
+G = 6.67408e-8      # cgs units; from wikipedia
+rho_nuc = 2e14      # nuclear density; just a scaling
+m_b = 1.66e-24      # g; neutron mass from de96
+solar_mass = 1.98855e33  # g
+n_0 = 0.1           # fm^{-3}; from de96
 
 # EOS from Haensel et al. 1981, EOS ".20"
 # n (fm^-3), rho (g cm^-3) P (erg cm^-3)
@@ -124,125 +127,259 @@ table_merged = ([[n, rho, P] for (n, rho, P) in table_baym if n <= 0.1]
                 + [[n, rho, P] for (n, rho, P) in table_20 if n > 0.1])
 table_merged = np.array(table_merged)
 
+if np.any(np.diff(table_merged, axis=0) < 0):
+    raise ValueError
 
-def eos_20(p):
-    if p <= 0:
+def lookup(table_x, table_y, x):
+    if len(table_x) != len(table_y):
+        raise ValueError
+    if x <= 0:
         return 0
-    i = np.searchsorted(table_merged[:, 2], p)
-    if i == len(table_merged):
-        # off the top end, so extrapolate
+    i = np.searchsorted(table_x, x)
+    if i == 0:
+        i += 1
+    if i == len(table_x):
         i -= 1
-    p0, p1 = table_merged[i:i+2, 2]
-    rho0, rho1 = table_merged[i:i+2, 1]
-    t = (np.log(p)-np.log(p0))/(np.log(p1)-np.log(p0))
-    return np.exp(np.log(rho0)+t*(np.log(rho1)-np.log(rho0)))
+    x0, x1 = table_x[i-1:i+1]
+    y0, y1 = table_y[i-1:i+1]
+    t = (np.log(x)-np.log(x0))/(np.log(x1)-np.log(x0))
+    return np.exp(np.log(y0)+t*(np.log(y1)-np.log(y0)))
+    
 
+def eos_20_rho_p(p):
+    return lookup(table_merged[:,2], table_merged[:,1], p)
+
+    
+def eos_20_n_p(p):
+    return lookup(table_merged[:,2], table_merged[:,0], p)
+
+
+de96_Gamma = 2.34
+de96_K = 0.0195
+def eos_de96_rho_n(n):
+    return n*m_b + de96_K*n_0*m_b/(de96_Gamma-1)*(n/n_0)**de96_Gamma
+def eos_de96_p_n(n):
+    return de96_K*n_0*m_b*(n/n_0)**de96_Gamma
+def eos_de96_n_p(p):
+    return n_0*(p/(de96_K*n_0*m_b))**(1/de96_Gamma)
+def eos_de96_rho_p(p):
+    return eos_de96_rho_n(eos_de96_n_p(p))
 
 class NeutronStar(object):
 
-    def __init__(self, a, b, r_start=10.):
+    def __init__(self, a, b, rho_start=1e-6):
         self.a = a
         self.b = b
-        self.r_start = r_start
+        self.rho_start = rho_start
 
     def A(self, phi):
         return np.exp(self.a*phi+self.b*phi**2/2)
 
-    def Rho(self, P):
-        return eos_20(P)
+    def energy_density(self, p):
+        return eos_20_rho_p(p)*c**2
 
-    def RHS(self, r, x):
+    def n(self, p):
+        return eos_20_n_p(p)
+
+    def RHS(self, rho, x):
         """RHS for EOS integration
 
-        Based on Horbatsch and Burgess 2011 eqns. 3.8--3.11
+        Based on Damour and Esposito-Farese 1996
         """
 
-        p, phi, omega, mu = x
-        Rho_0 = self.Rho_0
-        rho_p = self.Rho(p*Rho_0*c**2)/Rho_0*c**2
+        M, nu, phi, psi, p, Mb, omega, omicron = x
+
         A_phi = self.A(phi)
         a_phi = self.a+self.b*phi
+        e = self.energy_density(p)
+        n = self.n(p)
 
-        p_prime = -(rho_p+p)*(
-            (4*pi*G*Rho_0/c**2*r**2*A_phi**4*p+mu)/(r*(1-2*mu))
-            + r*omega**2/2 + a_phi*omega)
+        M_prime = (4*np.pi*G/c**4*rho**2*A_phi**4*e
+                   + rho*(rho-2*M)*psi**2)
+        nu_prime = (8*np.pi*G/c**4*rho**2*A_phi**4*p/(rho-2*M)
+                    + rho*psi**2 + 2*M/(rho*(rho-2*M)))
+        phi_prime = psi
+        psi_prime = (4*np.pi*G/c**4*rho*A_phi**4/(rho-2*M)
+                     * (a_phi*(e-3*p)+rho*psi*(e-p))
+                     - 2*(rho-M)*psi/(rho*(rho-2*M)))
+        p_prime = -(e+p)*(4*np.pi*G/c**4*rho**2*A_phi**4*p/(rho-2*M)
+                          + rho*psi**2/2
+                          + M/(rho*(rho-2*M))
+                          + a_phi*psi)
+        Mb_prime = 4*np.pi*m_b*n*A_phi**3*rho**2/np.sqrt(1-2*M/rho)
+        omega_prime = omicron
+        omicron_prime = (4*np.pi*G/c**4*rho**2/(rho-2*M)*A_phi**4
+                         * (e+p)*(omicron*4*omega/rho)
+                         + (psi**2*rho - 4/rho)*omicron)
 
-        # nu_prime = ((8*pi*G*rho_0*r**2*A_phi**4*p+2*mu)
-        #             / (r*(1-2*mu))
-        #             + r*omega**2)
-        phi_prime = omega
-        mu_prime = ((4*pi*G*Rho_0/c**2*r**2*A_phi**4*rho_p-mu)
-                    / r
-                    + r*(1-2*mu)*omega**2/2)
-        omega_prime = ((4*pi*G*Rho_0/c**2*A_phi**4
-                        / (1-2*mu))
-                       * (a_phi*(rho_p-3*p)+r*omega*(rho_p-p))
-                       - (2*(1-mu)*omega/(r*(1-2*mu))))
-        print("p_prime\t",p_prime)
-        print("mu_prime\t",mu_prime)
-        return np.array([p_prime, phi_prime, omega_prime, mu_prime])
+        r = np.array([M_prime, nu_prime, phi_prime, psi_prime, 
+                      p_prime, Mb_prime, omega_prime, omicron_prime])
+        return r
 
-    def setup_initial(self, P_0, phi_0):
-        self.Rho_0 = self.Rho(P_0)
-        Rho_0 = self.Rho_0
-        p_0 = P_0/Rho_0/c**2
-        A_0 = self.A(phi_0)
-        a_0 = self.a+self.b*phi_0
-        print("p_0\t",p_0) 
-        mu = (4*pi*G*Rho_0/c**2*A_0**4*self.r_start**2)/3
-        p = p_0 + ((2*pi*G*Rho_0/c**2*A_0**4)/3
-                   * (p_0+1)
-                   * (a_0**2*(3*p_0-1)-(3*p_0+1))
-                   * self.r_start**2)
-        phi = phi_0 - ((2*pi*G*Rho_0/c**2*A_0**4)/3
-                       * a_0*(3*p_0 - 1)
-                       * self.r_start**2)
-        omega = -2*((2*pi*G*Rho_0/c**2*A_0**4)/3
-                    * a_0*(3*p_0 - 1)
-                    * self.r_start)
-        print("p\t",p)
-        print("mu\t",mu)
-        return np.array([p, phi, omega, mu])
+    def setup_initial(self, p_c, phi_c):
+        A_phi = self.A(phi_c)
+        a_phi = self.a+self.b*phi_c
+        e = self.energy_density(p_c)
 
-    def match_external(self, r, x):
-        p, phi, omega, mu = x
+        M = 0
+        nu = 0
+        phi = phi_c
+        psi = (self.rho_start/3
+               * 4*np.pi*G/c**4
+               * A_phi**4
+               * a_phi*(e-3*p_c))
+        Mb = 0
+        omega = 1
+        omicron = (self.rho_start/5
+                   * 16*np.pi*G/c**4*A_phi**4
+                   * (e+p_c)*omega)
+        return np.array([M, nu, phi, psi, p_c, Mb, omega, omicron])
+               
+    def match_external(self, rho, x):
+        M, nu, phi, psi, p, Mb, omega, omicron = x
 
-        # A_phi = self.A(phi)
-        # a_phi = self.a+self.b*phi
+        self.R = rho
+        self.nu_prime = self.R*psi**2+2*M/(self.R*(self.R-2*M))
+        self.alpha_A = 2*psi/self.nu_prime
+        self.Q1 = np.sqrt(1+self.alpha_A**2)
+        self.Q2 = np.sqrt(1-2*M/self.R)
+        self.nu_hat = -2/self.Q1*np.arctanh(self.Q1/(1+2/(self.R*self.nu_prime)))
+        self.phi_0 = phi-self.alpha_A*self.nu_hat/2
+        self.m_A = (c**2/(2*G)*self.nu_prime*self.R**2*self.Q2
+                    * np.exp(self.nu_hat/2))
+        self.mb_A = Mb
+        self.J_A = (c**2/(6*G)*omicron*self.R**4*self.Q2
+                    * np.exp(-self.nu_hat/2))
+        self.Omega = omega - (c**4/G**2
+                              * 3*self.J_A/(4*self.m_A**3*(3-self.alpha_A**2))
+                              * (np.exp(2*self.nu_hat) - 1
+                                 + (4*G*self.m_A/(self.R*c**2)
+                                    * np.exp(self.nu_hat)
+                                    * (2*G*self.m_A/(self.R*c**2)
+                                       + np.exp(self.nu_hat/2)
+                                       * np.cosh(self.Q1*self.nu_hat/2)))))
+        self.I_A = self.J_A/self.Omega
+        self.alpha_0 = self.a+self.b*self.phi_0
+        self.beta_0 = self.b
 
-        J = 2*(1-mu)+r**2*omega**2*(1-2*mu)
-        K = 2*mu+r**2*omega**2*(1-2*mu)
-        L = np.sqrt(4*mu**2
-                    + 4*r**2*omega**2*(1-mu)*(1-2*mu)
-                    + r**4*omega**4*(1-2*mu)**2)
+        # Unit conversion
+        self.R *= 1e-5
+        self.m_A /= solar_mass
+        self.mb_A *= 1e39/solar_mass
 
-        self.s = K/(2*np.sqrt(1-2*mu))*np.exp(-K/L*np.arctanh(L/J))
-        self.a_A = (2*r*omega*(1-2*mu))/K
-        self.phi_inf = phi + (2*r*omega*(1-2*mu)/L)*np.arctanh(L/J)
-        self.M = r*self.s/G
-        self.Q = self.a_A*self.M
-        
-    def integrate(self, P_0, phi_0):
-        x = self.setup_initial(P_0, phi_0)
+        self.Delta = self.alpha_0*(self.alpha_A-self.alpha_0)
+
+    def integrate(self, p_c, phi_c):
+        x = self.setup_initial(p_c, phi_c)
         O = scipy.integrate.ode(self.RHS)
-        O.set_integrator('dopri5')
-        O.set_initial_value(x, self.r_start)
-        p = P_0/(self.Rho_0*c**2)
-        rn = self.r_start
+        O.set_integrator('vode')
+        O.set_initial_value(x, self.rho_start)
+        p = p_c
+        rn = self.rho_start
         rs = [rn]
         xs = [x]
         while p > 0 and O.successful():
-            ro = rn
-            xn = O.integrate(1e10, step=True)
+            x = O.integrate(1e10, step=True)
             rn = O.t
-            p, phi, omega, mu = xn
+            M, nu, phi, psi, p, Mb, omega, omicron = x
             rs.append(rn)
-            xs.append(xn)
-            print(rn, rn-ro)
+            xs.append(x)
+        # automatic step size control senses the discontinuity and stops
 
-        # now backtrack to find the zero between ro and rn
-
-        # now use external matching to compute properties we 
-        # actually care about
+        self.match_external(rn, x)
 
         return rs, xs
+
+
+def evaluate(p_c, phi_c, beta_0):
+    N = NeutronStar(a=0, b=beta_0)
+    N.integrate(p_c, phi_c)
+    d = dict(initial=(p_c, phi_c, beta_0))
+    for k in dir(N):
+        a = getattr(N, k)
+        if k.startswith("_") or callable(a):
+            continue
+        d[k] = a
+    return d
+
+
+p_c_start = 1e35   # <1 M_sun in GR
+
+def mr_curve(points, phi_c, beta_0, mass):
+    points.sort()
+    if not points:
+        p_c = 1e34
+        d = evaluate(p_c, phi_c, beta_0)
+        points.append((p_c, d))
+
+    # FIXME: these can just check the first and last
+    def has_incr():
+        if len(points) < 2:
+            return False
+        return points[0][1]["m_A"] < points[1][1]["m_A"]
+
+    def has_decr():
+        if len(points) < 2:
+            return False
+        return points[-2][1]["m_A"] > points[-1][1]["m_A"]
+
+    while not has_incr() or points[0][1]["m_A"] > mass:
+        p_c = points[0][0]*(0.9)
+        d = evaluate(p_c, phi_c, beta_0)
+        points.insert(0, (p_c, d))
+
+    while not has_decr():
+        p_c = points[-1][0]*(1.1)
+        d = evaluate(p_c, phi_c, beta_0)
+        points.append((p_c, d))
+        
+    peak = None
+    while peak is None or points[peak][1]["m_A"] < mass:
+        for i in range(1, len(points)-1):
+            if (points[i-1][1]["m_A"] < points[i][1]["m_A"]
+                and points[i][1]["m_A"] >= points[i+1][1]["m_A"]):
+                peak = i
+                break
+        else:
+            raise ValueError
+    
+        # FIXME: infinite loop if peak not achievable
+        # Use brent to find the actual peak
+        if points[peak][1]["m_A"] < mass:
+            p_c = (points[peak][0]+points[peak+1][0])/2
+            d = evaluate(p_c, phi_c, beta_0)
+            points.insert(peak+1, (p_c, d))
+
+            p_c = (points[peak][0]+points[peak-1][0])/2
+            d = evaluate(p_c, phi_c, beta_0)
+            points.insert(peak, (p_c, d))
+
+    for i in range(1, peak+1):
+        if points[i][1]["m_A"] >= mass:
+            break
+    else:
+        raise ValueError
+
+    if points[i][1]["m_A"] == mass:
+        return points[i][1]["m_A"]
+    
+    a, b = points[i-1][0], points[i][0]
+    pd = {p_c: d for (p_c, d) in points} 
+
+    def f(p_c):
+        try:
+            d = pd[p_c]
+        except KeyError:
+            d = evaluate(p_c, phi_c, beta_0)
+            pd[p_c] = d
+        return d["m_A"] - mass
+
+    p_c = scipy.optimize.brentq(f, a, b)
+    d = pd[p_c]
+
+    # Can't reassign points
+    del points[:]
+    points.extend([ i for i in pd.items() ])
+    points.sort()
+
+    return d
