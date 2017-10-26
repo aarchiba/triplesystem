@@ -73,12 +73,12 @@ def linear_least_squares_cov(par_dict, Acols, mjd, phase, unc):
 #function-3---create_plotable_arrows (arrow array)
 ##################################################
 
-def plotter(par_dict, Acols, mjd, phase, unc):
+def ar_coeff(par_dict, Acols, mjd, phase, unc):
     '''Calculates arrow coefficients and values for a given data set.
        Returns: object with arrows (coordinates, directions and lengths as well as 1-sigma errors) 
 par_dict - dictionary with pulsar parameters
 Acols - max number of inner orbital frequencies to calculate
-mjd, phase, unc - parameters of data''' 
+mjd, phase, unc - parameters of data'''
 
     ang = np.linspace(0,2*np.pi,100)
     circle = np.array([np.cos(ang),np.sin(ang)])
@@ -90,6 +90,8 @@ mjd, phase, unc - parameters of data'''
     V = []
     err_X = []
     err_Y = []
+    err_U = []
+    err_V = []
     err_ix = []
     for (i,j,f) in result.keys():
         Y.append(i)
@@ -98,6 +100,8 @@ mjd, phase, unc - parameters of data'''
         err_ix.append((i,j))
         if (i,j)==(0,0):
             V.append(0)
+            err_U.append(0)
+            err_V.append(0)
             err_X.append(0)
             err_Y.append(0)
         else:
@@ -105,15 +109,18 @@ mjd, phase, unc - parameters of data'''
 
             st=fit.names.index((i, j, 'cos'))
             fin=fit.names.index((i, j, 'sin'))+1
-            err_M=fit.cov[st:fin,st:fin]
-            assert err_M.shape==(2,2)
-            L = scipy.linalg.cholesky(err_M)
+            err_MM=fit.cov[st:fin,st:fin]
+            err_U.append(np.sqrt(np.diag(err_MM))[0])
+            err_V.append(np.sqrt(np.diag(err_MM))[1])
+            assert err_MM.shape==(2,2)
+            L = scipy.linalg.cholesky(err_MM)
             Lcircle = np.dot(L,circle)
             # print Lcircle[0][7]
             err_X.append(Lcircle[0])
             err_Y.append(Lcircle[1])
 
     M = np.hypot(V, U)
+    err_M = np.hypot(err_U,err_V)
     class Result(object):
          pass
     pl = Result()
@@ -124,8 +131,14 @@ mjd, phase, unc - parameters of data'''
     pl.M = np.array(M)
     pl.err_X = np.array(err_X)
     pl.err_Y = np.array(err_Y)
+    pl.err_U = np.array(err_U)
+    pl.err_V = np.array(err_V)
+    pl.err_M = np.array(err_M)
     pl.err_ix = np.array(err_ix)
     return pl
+
+
+
 
 
 #-----function-4 --- gives parameters of a given arrow
@@ -170,6 +183,8 @@ pl - object with arrow coordinates, directions and lenghts (input your units)'''
             plt.plot(pl.err_X[k]/ar_scale+j,pl.err_Y[k]/ar_scale+i, color=color, lw=1, alpha=0.3)
     Q = plt.quiver(pl.X, pl.Y, pl.U, pl.V, units='x', scale=ar_scale, color=color)
     Acols=np.amax(pl.X)+1
+    plt.rc('xtick', labelsize=15)
+    plt.rc('ytick', labelsize=15)
     plt.xlim(-Acols+0.05,Acols-0.05)
     plt.ylim(-0.95,Acols-0.05)
     plt.xlabel('Inner orbit frequencies')
@@ -189,7 +204,7 @@ def draw_plot(par_dict, Acols, mjd, phase, unc, scale=None, plot_unc=True, color
 par_dict - dictionary with pulsar parameters
 Acols - max number of inner orbital frequencies to calculate
 mjd, phase, unc - parameters of data (in units you want to get your arrow lenghts in)'''
-    pl=plotter(par_dict, Acols, mjd, phase, unc)
+    pl=ar_coeff(par_dict, Acols, mjd, phase, unc)
     return coeff_plot(pl,scale=scale, plot_unc=plot_unc, color=color, units=units, lentext=lentext)
 
 def lstsq_with_errors(A,b,uncerts=None):
@@ -254,6 +269,15 @@ def lstsq_with_errors(A,b,uncerts=None):
     r.corr = r.cov/r.uncerts[:,None]/r.uncerts[None,:]
     return r
 
+def der_fit(data,phase,unc):
+    d=np.array(data['derivatives'])[np.newaxis][0]
+    cols= sorted(d.keys())
+    A = np.array([d[c] for c in cols]).T
+    b=phase
+    r = lstsq_with_errors(A, b, unc)
+    better_phase=b-np.dot(A,r.x)
+    return better_phase
+
 
 def der_of_par(data, par, unc):
     d=np.array(data['derivatives'])[np.newaxis][0]
@@ -269,3 +293,70 @@ def der_of_par(data, par, unc):
     r = lstsq_with_errors(A, b, unc)
     der_par=(b-np.dot(A,r.x))
     return der_par
+
+def plot_hex(par_dict, mjd,res, size, colorbar=True):
+    my_width=6
+    mar_size=my_width*0.33
+    lab_size=my_width*1.7
+    tick_size=my_width*0.66
+    font_size=my_width*2.0
+    
+    font2 = FontProperties()
+    font2.set_size('%d'%font_size)
+    font2.set_family('sans')
+    font2.set_style('normal')
+    font2.set_weight('bold')
+    plt.tick_params('x', colors='k', size=tick_size)
+    plt.tick_params('y', colors='k', size=tick_size)
+    plt.rc('xtick', labelsize=lab_size) 
+    plt.rc('ytick', labelsize=lab_size)
+    
+
+    pb_i = par_dict['pb_i']
+    pb_o = par_dict['pb_o']
+    plt.set_cmap('coolwarm')
+    im=plt.hexbin((mjd/pb_i)%1, mjd,res,size) 
+    plt.xlabel("inner phase", fontproperties=font2)
+    plt.ylabel("MJD", fontproperties=font2)
+    if colorbar:
+        cb = plt.colorbar(im)
+        cb.set_label(r'$\mu$s', fontproperties=font0)
+    plt.gcf().set_size_inches(my_width,my_width*0.77)
+    return
+
+
+def fake_arrows(par_dict,Acols,mjd,unc,ampl):
+    A=matrix(par_dict,Acols,mjd)
+    amplitude=ampl*np.random.randn(np.shape(A.A)[1])
+    my_dict = dict(zip(A.names,amplitude))
+    X = []
+    Y = []
+    U = []
+    V = []
+    for (i,j,f) in my_dict.keys():
+        Y.append(i)
+        X.append(j)
+        U.append(my_dict[i,j,'cos'])
+        if (i,j)==(0,0):
+            V.append(0)
+        else:
+            V.append(my_dict[i,j,'sin'])
+    M=np.hypot(V,U)
+    class Result(object):
+         pass
+    pl = Result()
+    pl.X = np.array(X)
+    pl.Y = np.array(Y)
+    pl.U = np.array(U)
+    pl.V = np.array(V)
+    pl.M = np.array(M)
+    
+    arrows=np.dot(A.A,amplitude)+unc
+    return arrows, amplitude
+
+def get_arrow_length(pl):
+    my_pl=np.concatenate((pl.U, pl.V), axis=0)
+    my_pl_err = np.concatenate((pl.err_U,pl.err_V), axis=0)
+    mu, std = norm.fit(my_pl, q=my_pl_err)
+    return std
+

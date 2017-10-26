@@ -15,6 +15,15 @@ from scipy.stats import kstest
 from scipy.stats import norm
 from matplotlib.font_manager import FontProperties
 
+def mpu(data):
+    limiit=10000
+    base_mjd=data['base_mjd']
+    c = abs(data['residuals']/data['phase_uncerts'])<limiit
+    phase = np.array(data['residuals'][c], dtype=np.float64)
+    mjd = np.array(data['times'][c], dtype=np.float64)+base_mjd
+    unc = np.array(data['phase_uncerts'][c], dtype=np.float64)
+    return mjd, phase, unc
+
 tel_out=namedtuple("tel_transform",
        ["phase", "mjd","unc", "index", "name"])
 
@@ -24,12 +33,16 @@ def tel_transform(data,name,limiit=None):
 data - pickle or npz package
 name - name of the telescope in quotes
 limiit - in case you want to exctract only high SN ratio residuals. Use this as an upper limit'''
-
-    tel_res=np.array(data['residuals'][data['telescopes']==list(data['telescope_list']).index(name)], dtype=np.float64)
-    tel_unc=np.array(data['phase_uncerts'][data['telescopes']==list(data['telescope_list']).index(name)], dtype=np.float64)
-    tel_mjd=np.array(data['times'][data['telescopes']==list(data['telescope_list']).index(name)], dtype=np.float64)+data['base_mjd']
-    
-    tel_index=(data['telescopes']==list(data['telescope_list']).index(name))
+    if name == 'all':
+        tel_res=np.array(data['residuals'])
+        tel_unc=np.array(data['phase_uncerts'])
+        tel_mjd=np.array(data['times'])
+        tel_index= np.ones((len(data['residuals'])), dtype = np.bool)
+    else:
+        tel_res=np.array(data['residuals'][data['telescopes']==list(data['telescope_list']).index(name)], dtype=np.float64)
+        tel_unc=np.array(data['phase_uncerts'][data['telescopes']==list(data['telescope_list']).index(name)], dtype=np.float64)
+        tel_mjd=np.array(data['times'][data['telescopes']==list(data['telescope_list']).index(name)], dtype=np.float64)+data['base_mjd']
+        tel_index=(data['telescopes']==list(data['telescope_list']).index(name))
     
     if limiit is None:
         limm=10000
