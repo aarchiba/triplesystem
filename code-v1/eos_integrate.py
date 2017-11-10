@@ -156,14 +156,23 @@ def eos_20_n_p(p):
 
 de96_Gamma = 2.34
 de96_K = 0.0195
+
+
 def eos_de96_rho_n(n):
     return n*m_b + de96_K*n_0*m_b/(de96_Gamma-1)*(n/n_0)**de96_Gamma
+
+
 def eos_de96_p_n(n):
     return de96_K*n_0*m_b*(n/n_0)**de96_Gamma
+
+
 def eos_de96_n_p(p):
     return n_0*(p/(de96_K*n_0*m_b))**(1/de96_Gamma)
+
+
 def eos_de96_rho_p(p):
     return eos_de96_rho_n(eos_de96_n_p(p))
+
 
 class NeutronStar(object):
 
@@ -195,7 +204,7 @@ class NeutronStar(object):
         n = self.n(p)
 
         M_prime = (4*np.pi*G/c**4*rho**2*A_phi**4*e
-                   + rho*(rho-2*M)*psi**2)
+                   + rho*(rho-2*M)*psi**2/2)
         nu_prime = (8*np.pi*G/c**4*rho**2*A_phi**4*p/(rho-2*M)
                     + rho*psi**2 + 2*M/(rho*(rho-2*M)))
         phi_prime = psi
@@ -238,36 +247,42 @@ class NeutronStar(object):
     def match_external(self, rho, x):
         M, nu, phi, psi, p, Mb, omega, omicron = x
 
-        self.R = rho
-        self.nu_prime = self.R*psi**2+2*M/(self.R*(self.R-2*M))
-        self.alpha_A = 2*psi/self.nu_prime
-        self.Q1 = np.sqrt(1+self.alpha_A**2)
-        self.Q2 = np.sqrt(1-2*M/self.R)
-        self.nu_hat = -2/self.Q1*np.arctanh(self.Q1/(1+2/(self.R*self.nu_prime)))
-        self.phi_0 = phi-self.alpha_A*self.nu_hat/2
-        self.m_A = (c**2/(2*G)*self.nu_prime*self.R**2*self.Q2
-                    * np.exp(self.nu_hat/2))
-        self.mb_A = Mb
-        self.J_A = (c**2/(6*G)*omicron*self.R**4*self.Q2
-                    * np.exp(-self.nu_hat/2))
-        self.Omega = omega - (c**4/G**2
-                              * 3*self.J_A/(4*self.m_A**3*(3-self.alpha_A**2))
-                              * (np.exp(2*self.nu_hat) - 1
-                                 + (4*G*self.m_A/(self.R*c**2)
-                                    * np.exp(self.nu_hat)
-                                    * (2*G*self.m_A/(self.R*c**2)
-                                       + np.exp(self.nu_hat/2)
-                                       * np.cosh(self.Q1*self.nu_hat/2)))))
-        self.I_A = self.J_A/self.Omega
-        self.alpha_0 = self.a+self.b*self.phi_0
-        self.beta_0 = self.b
+        with np.errstate(over='raise', invalid='raise'):
 
-        # Unit conversion
-        self.R *= 1e-5
-        self.m_A /= solar_mass
-        self.mb_A *= 1e39/solar_mass
+            self.R = np.float64(rho)
+            self.nu_prime = self.R*psi**2+2*M/(self.R*(self.R-2*M))
+            self.alpha_A = 2*psi/self.nu_prime
+            self.Q1 = np.sqrt(1+self.alpha_A**2)
+            self.Q2 = np.sqrt(1-2*M/self.R)
+            self.nu_hat = (-2/self.Q1
+                           * np.arctanh(self.Q1/(1+2/(self.R*self.nu_prime))))
+            self.phi_0 = phi-self.alpha_A*self.nu_hat/2
+            self.m_A = (c**2/(2*G)*self.nu_prime*self.R**2*self.Q2
+                        * np.exp(self.nu_hat/2))
+            self.mb_A = Mb
+            self.J_A = (c**2/(6*G)*omicron*self.R**4*self.Q2
+                        * np.exp(-self.nu_hat/2))
+            self.Omega = omega - (c**4/G**2
+                                  * 3*self.J_A/(4*self.m_A**3*(3-self.alpha_A**2))
+                                  * (np.exp(2*self.nu_hat) - 1
+                                     + (4*G*self.m_A/(self.R*c**2)
+                                        * np.exp(self.nu_hat)
+                                        * (2*G*self.m_A/(self.R*c**2)
+                                           + np.exp(self.nu_hat/2)
+                                           * np.cosh(self.Q1*self.nu_hat/2)))))
+            self.I_A = self.J_A/self.Omega
 
-        self.Delta = self.alpha_0*(self.alpha_A-self.alpha_0)
+            # We want phi -> 0 at infinity, so we apply the transformation
+            # phi -> phi-phi_0. This requires us to change a and b.
+            self.alpha_0 = self.a+self.b*self.phi_0
+            self.beta_0 = self.b
+            
+            # Unit conversion
+            self.R *= 1e-5
+            self.m_A /= solar_mass
+            self.mb_A *= 1e39/solar_mass
+
+            self.Delta = self.alpha_0*(self.alpha_A-self.alpha_0)
 
     def integrate(self, p_c, phi_c):
         x = self.setup_initial(p_c, phi_c)
@@ -303,12 +318,17 @@ def evaluate(p_c, phi_c, beta_0):
     return d
 
 
-p_c_start = 1e35   # <1 M_sun in GR
+class EOSError(ValueError):
+    pass
+
+
+p_c_start = 1e34   # <1 M_sun in GR
+
 
 def mr_curve(points, phi_c, beta_0, mass):
     points.sort()
     if not points:
-        p_c = 1e34
+        p_c = p_c_start
         d = evaluate(p_c, phi_c, beta_0)
         points.append((p_c, d))
 
@@ -328,31 +348,43 @@ def mr_curve(points, phi_c, beta_0, mass):
         d = evaluate(p_c, phi_c, beta_0)
         points.insert(0, (p_c, d))
 
-    while not has_decr():
-        p_c = points[-1][0]*(1.1)
-        d = evaluate(p_c, phi_c, beta_0)
-        points.append((p_c, d))
-        
-    peak = None
-    while peak is None or points[peak][1]["m_A"] < mass:
-        for i in range(1, len(points)-1):
-            if (points[i-1][1]["m_A"] < points[i][1]["m_A"]
-                and points[i][1]["m_A"] >= points[i+1][1]["m_A"]):
-                peak = i
-                break
-        else:
-            raise ValueError
+    try:
+        while not has_decr():
+            if points[-1][1]["R"] > 1000:   # km
+                raise FloatingPointError
+            p_c = points[-1][0]*(1.1)
+            d = evaluate(p_c, phi_c, beta_0)
+            points.append((p_c, d))
     
-        # FIXME: infinite loop if peak not achievable
-        # Use brent to find the actual peak
-        if points[peak][1]["m_A"] < mass:
-            p_c = (points[peak][0]+points[peak+1][0])/2
-            d = evaluate(p_c, phi_c, beta_0)
-            points.insert(peak+1, (p_c, d))
+        # Find the maximum mass for this EOS and theory of gravity
+        peak = np.argmax([d["m_A"] for (_, d) in points])
 
-            p_c = (points[peak][0]+points[peak-1][0])/2
-            d = evaluate(p_c, phi_c, beta_0)
-            points.insert(peak, (p_c, d))
+        a, b, c = points[peak-1][0], points[peak][0], points[peak+1][0]
+        pd = {p_c: d for (p_c, d) in points} 
+
+        def f(p_c):
+            try:
+                d = pd[p_c]
+            except KeyError:
+                d = evaluate(p_c, phi_c, beta_0)
+                pd[p_c] = d
+            return -d["m_A"]
+
+        scipy.optimize.brent(f, brack=(a, b, c))
+
+        # Can't reassign points
+        del points[:]
+        points.extend([ i for i in pd.items() ])
+        points.sort()
+    except FloatingPointError:
+        # oops, curve doesn't have a maximum mass !?
+        pass
+    
+    peak = np.argmax([d["m_A"] for (_, d) in points])
+    mass_max = points[peak][1]["m_A"]
+    if mass > mass_max:
+        raise EOSError("Requested mass %f greater than "
+                       "maximum mass %f supported by EOS" % (mass, mass_max))
 
     for i in range(1, peak+1):
         if points[i][1]["m_A"] >= mass:
@@ -382,4 +414,136 @@ def mr_curve(points, phi_c, beta_0, mass):
     points.extend([ i for i in pd.items() ])
     points.sort()
 
+    return d.copy()
+
+
+phi_c_start = 0.001
+
+
+class AlphaProblem(FloatingPointError):
+    pass
+
+
+def find_root(f, existing_points, tol=1e-3):
+    existing_points = sorted(existing_points)
+    if len(existing_points) < 2: 
+        raise ValueError
+    l = 0
+    r = len(existing_points)-1
+    if f(existing_points[l]) > 0 or f(existing_points[r]) < 0:
+        raise ValueError("Not a bracket")
+    while r-l > 1:
+        i = (l+r)//2
+        assert i != l and i != r
+        if f(existing_points[i]) >= 0:
+            r = i
+        else:
+            l = i
+    lx, rx = existing_points[l], existing_points[r]
+    print("brentq with", lx, f(lx), rx, f(rx), "xtol", tol)
+    x = scipy.optimize.brentq(f, lx, rx, xtol=tol)
+    return x
+
+
+def find_scalarization(alpha_map, beta_0, mass, 
+                       phi_c_min=0.000001, phi_c_max=1):
+    def f(phi_c):
+        if phi_c is None: 
+            raise ValueError
+        if phi_c not in alpha_map:
+            alpha_map[phi_c] = []
+        try:
+            d = mr_curve(alpha_map[phi_c], phi_c, beta_0, mass)
+        except EOSError:
+            return np.inf
+        print(phi_c, d["alpha_0"])
+        return np.sign(beta_0)*d["alpha_0"]
+    if None in alpha_map:
+        del alpha_map[None]
+    fn = f(phi_c_min)
+    fx = f(phi_c_max)
+    # FIXME: might need to scale back phi_c_max
+
+    if fx < 0:
+        raise ValueError("alpha_0 not positive for large phi_c")
+
+    if fn > 0:
+        print("No spontaneous scalarization found")
+        return 0
+
+    phi_c_0 = find_root(f, sorted(alpha_map.keys()), tol=1e-12)
+    print("phi_c_0", phi_c_0)
+    return phi_c_0
+
+
+def try_alpha(alpha_map, phi_c, beta_0, mass):
+    if phi_c not in alpha_map:
+        alpha_map[phi_c] = []
+    try:
+        return mr_curve(alpha_map[phi_c], phi_c, beta_0, mass)
+    except EOSError:
+        return None
+
+
+def explore_alpha(alpha_map, beta_0, mass, condition):
+    phi_c_min = find_scalarization(alpha_map, beta_0, mass)
+
+    def f(phi_c_plus):
+        phi_c = phi_c_plus + phi_c_min
+        if phi_c is None: 
+            raise ValueError
+        if phi_c not in alpha_map:
+            alpha_map[phi_c] = []
+        try:
+            d = mr_curve(alpha_map[phi_c], phi_c, beta_0, mass)
+        except EOSError:
+            return np.inf
+        print(phi_c, phi_c_plus, "condition:", condition(d))
+        return condition(d)
+
+    if None in alpha_map:
+        del alpha_map[None]
+    assert alpha_map
+
+    if f(0) > 0:
+        print("No solution")
+        return None  # no solution
+        # raise ValueError("Condition already positive for minimum phi_c")
+
+    phi_c_max = max(alpha_map.keys())
+    while f(phi_c_max-phi_c_min) < 0:
+        phi_c_max *= 2
+    
+    phi_c_plus = find_root(f, 
+                           sorted(k-phi_c_min for k in alpha_map
+                                  if k >= phi_c_min), 
+                           tol=1e-12)
+    phi_c = phi_c_plus + phi_c_min
+    d = mr_curve(alpha_map[phi_c], phi_c, beta_0, mass)
+    print("returning", phi_c, d["alpha_0"], condition(d))
     return d
+
+
+def explore_beta(all_map, betas, mass, condition):
+    alphas = []
+    for beta_0 in betas:
+        print("Exploring for beta=%f" % beta_0)
+        if beta_0 not in all_map:
+            all_map[beta_0] = {}
+        try:
+            d = explore_alpha(all_map[beta_0],
+                              beta_0,
+                              mass,
+                              condition)
+            if d is None:
+                alphas.append(0)
+            else:
+                alphas.append(d["alpha_0"])
+        except AlphaProblem:
+            print("No solution found for", beta_0)
+            alphas.append(0)
+        except EOSError as e:
+            print(e, beta_0)
+            alphas.append(0)
+
+    return np.array(alphas)
