@@ -176,17 +176,6 @@ def plot_res(data, mjd, phase, unc, name, color='b',scl=None):
 
     return
 
-def plot_hex(par_dict, mjd,res,size):
-    pb_i = par_dict['pb_i']
-    pb_o = par_dict['pb_o']
-    plt.set_cmap('coolwarm')
-    plt.hexbin((mjd/pb_i)%1, mjd/pb_o,res,size)
-    plt.xlabel("inner phase")
-    plt.ylabel("outer orbits")
-    plt.rc('xtick', labelsize=10)
-    plt.rc('ytick', labelsize=10)
-    plt.colorbar(label=r'$\mu$s')
-
 #Function to fit normal distribution to it and plot it
 def fit_plot(emac, number, name, color, numplots, limm):
     mu, std = norm.fit(emac)
@@ -210,4 +199,33 @@ def fit_plot(emac, number, name, color, numplots, limm):
     plt.figtext(xx,yy, '%s'%name, fontsize=20, color=color)
     return std
 
+def plot_hex(par_dict, mjd,res, size, colorbar=True):
+    my_width=6
+    mar_size=my_width*0.33
+    lab_size=my_width*1.7
+    tick_size=my_width*0.66
+    font_size=my_width*2.0
+    
+    font2 = FontProperties()
+    font2.set_size('%d'%font_size)
+    font2.set_family('sans')
+    font2.set_style('normal')
+    font2.set_weight('bold')
+    plt.tick_params('x', colors='k', size=tick_size)
+    plt.tick_params('y', colors='k', size=tick_size)
+    plt.rc('xtick', labelsize=lab_size) 
+    plt.rc('ytick', labelsize=lab_size)
+    
+
+    pb_i = par_dict['pb_i']
+    pb_o = par_dict['pb_o']
+    plt.set_cmap('coolwarm')
+    im=plt.hexbin((mjd/pb_i)%1, mjd,res,size) 
+    plt.xlabel("inner phase", fontproperties=font2)
+    plt.ylabel("MJD", fontproperties=font2)
+    if colorbar:
+        cb = plt.colorbar(im)
+        cb.set_label('ns', fontproperties=font2)
+    plt.gcf().set_size_inches(my_width,my_width*0.77)
+    return
 
