@@ -1302,7 +1302,7 @@ class Fitter(object):
         pepoch = np.longdouble(0.)
         cols = {}
         cols["f0"] = t_psr_s-pepoch
-        cols["f1"] = (t_psr_s-pepoch)**2
+        cols["f1"] = 0.5*(t_psr_s-pepoch)**2
         for i, n in enumerate(self.jnames):
             cols[n] = self.jmatrix[:, i]
         names = sorted(cols.keys())
