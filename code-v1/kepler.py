@@ -42,11 +42,14 @@ def eccentric_from_mean(e, mean_anomaly):
         eccentric_anomaly - the true anomaly
         derivatives - pair of derivatives with respect to the two inputs
     """
+    def newt(E):
+        r = E-e*np.sin(E)-mean_anomaly
+        return r
     eccentric_anomaly = newton(
-            lambda E: E-e*np.sin(E)-mean_anomaly,
+            newt,
             mean_anomaly,
             lambda E: 1-e*np.cos(E),
-            tol=1e-20)
+            tol=1e-18)  # 1e-19 or 1e-20 can lead to infinite loops
     eccentric_anomaly_de = np.sin(eccentric_anomaly)/(1-e*np.cos(eccentric_anomaly))
     eccentric_anomaly_prime = (1-e*np.cos(eccentric_anomaly))**(-1)
     return eccentric_anomaly, [eccentric_anomaly_de, eccentric_anomaly_prime]

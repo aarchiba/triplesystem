@@ -71,6 +71,8 @@ def lnprob(offset):
     r = F.lnprob(params)
     logger.debug("finished lnprob computation with %s" % r)
     extra_info = {}
+    if not np.isfinite(r):
+        return -np.inf, {}
     extra_info['linear_part'] = F.compute_linear_parts(params)
     for op in ['initial_values', 'time', 'n_evaluations', 'parameter_dict']:
         extra_info[op] = F.last_orbit[op]

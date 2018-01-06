@@ -466,6 +466,10 @@ def tcb_to_tdb(tcb, base_mjd=0):
     return tcb-IAU_K*(tcb-IFTE_MJD0)+IAU_TEPH0
 
 
+class OrbitError(ValueError):
+    pass
+
+
 def compute_orbit(parameter_dict, times, keep_states=True):
     """Compute an orbit given a dict of trial parameters
 
@@ -563,8 +567,12 @@ def compute_orbit(parameter_dict, times, keep_states=True):
         debug("Constructing initial conditions")
         initial_values, jac = kepler.kepler_three_body_measurable(
                 *(list(parameters)+[lan, np.zeros(3), np.zeros(3), 0]))
-    except (ValueError, RuntimeError):  # bogus system parameters
-        debug("Initial conditions bogus, returning nonsense")
+    except (ValueError, RuntimeError) as e:  # bogus system parameters
+        with open("bogus-ics.pickle", "wb") as f:
+            pickle.dump(list(parameters)+[lan, np.zeros(3), np.zeros(3), 0], f)
+        debug("Initial conditions bogus, returning nonsense: %s" % e)
+        raise OrbitError("Bogus initial conditions: %s" 
+                         % (list(parameters)+[lan, np.zeros(3), np.zeros(3), 0]))
         if special or general:
             ls = 22
         else:
@@ -1294,7 +1302,7 @@ class Fitter(object):
         pepoch = np.longdouble(0.)
         cols = {}
         cols["f0"] = t_psr_s-pepoch
-        cols["f1"] = (t_psr_s-pepoch)**2
+        cols["f1"] = 0.5*(t_psr_s-pepoch)**2
         for i, n in enumerate(self.jnames):
             cols[n] = self.jmatrix[:, i]
         names = sorted(cols.keys())
@@ -1406,17 +1414,21 @@ class Fitter(object):
 
     def lnprob(self, p, marginalize=True, linear_fit=True):
         """Return the log-likelihood of the fit"""
-        if marginalize:
-            r, m = self.residuals(p,
-                                  marginalize=marginalize,
-                                  linear_fit=linear_fit)
-        else:
-            r = self.residuals(p,
-                               marginalize=marginalize,
-                               linear_fit=linear_fit)
-            m = 0
-        r = r/self.phase_uncerts/self.efac
-        return -0.5*np.sum(r**2)-m
+        try:
+            if marginalize:
+                r, m = self.residuals(p,
+                                      marginalize=marginalize,
+                                      linear_fit=linear_fit)
+            else:
+                r = self.residuals(p,
+                                   marginalize=marginalize,
+                                   linear_fit=linear_fit)
+                m = 0
+            r = r/self.phase_uncerts/self.efac
+            return -0.5*np.sum(r**2)-m
+        except OrbitError:
+            debug("Bogus orbit caught; returning infinity")
+            return -np.inf
 
     def lnprior(self, p=None):
         """Return the log-likelihood of the prior
