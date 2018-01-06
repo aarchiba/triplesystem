@@ -20,6 +20,14 @@ matrix_out=namedtuple("matrix",
 #---------------------------------
 
 def matrix(par_dict, ll, mjd):
+    '''Creates matrix [ll x len(mjd)] of cos in sin with k phi_i + l phi_o phases.
+    k =[-ll,+ll]; l=[0,ll]
+    Returns: matrix, names (cos or sin components) and dictionarry that combines them.
+
+par_dict - dictionary with pulsar parameters (phi and t_asc)
+Acols - max number of inner orbital frequencies to calculate
+mjd - TOAs'''
+
     Adict = {}
     base_mjd=par_dict['base_mjd']
     pb_i = par_dict['pb_i']
@@ -44,6 +52,9 @@ def matrix(par_dict, ll, mjd):
 #-----------------------------------------------
 
 def linear_least_squares_cov(par_dict, Acols, mjd, phase, unc):
+    """Solve a linear least-squares problem and return uncertainties.
+    """
+
     A = matrix(par_dict, Acols, mjd)
     Adict=A.Adict
     names=A.names
@@ -75,73 +86,89 @@ def linear_least_squares_cov(par_dict, Acols, mjd, phase, unc):
 #----------------------------------------------------------
 #-function-------general-lstsq-fit-with-uncertainties------
 #----------------------------------------------------------
-def lstsq_with_errors(A,b,uncerts=None):
+def lstsq_with_errors(A, b, uncerts=None):
     """Solve a linear least-squares problem and return uncertainties
-
     This function extends `scipy.linalg.lstsq` in several ways: first,
     it supports uncertainties on each row of the least-squares problem.
     Second, `scipy.linalg.lstsq` fails if the scales of the fit
-    variables are very different. This function rescales them 
+    variables are very different. This function rescales them
     internally to improve the condition number. Finally, this function
     returns an object containing information about the uncertainties
     on the fit values; the `uncerts` attribute gives individual
     uncertainties, the `corr` attribute is the matrix of correlations,
     and the `cov` matrix is the full covariance matrix.
     """
-    if len(A.shape)!=2:
+    if len(A.shape) != 2:
         raise ValueError
     if uncerts is None:
         Au = A
         bu = b
     else:
-        Au = A/uncerts[:,None]
+        Au = A/uncerts[:, None]
         bu = b/uncerts
-    Ascales = np.sqrt(np.sum(Au**2,axis=0))
-    #Ascales = np.ones(A.shape[1])
-    if np.any(Ascales==0):
-        raise ValueError("zero column (%s) in A" % np.where(Ascales==0))
-    As = Au/Ascales[None,:]
+    Ascales = np.sqrt(np.sum(Au**2, axis=0))
+    # Ascales = np.ones(A.shape[1])
+    if np.any(Ascales == 0):
+        raise ValueError("zero column (%s) in A" % np.where(Ascales == 0))
+    As = Au/Ascales[None, :]
     db = bu
     xs = None
     best_chi2 = np.inf
     best_x = None
-    for i in range(5): # Slightly improve quality of fit
+    for i in range(5):   # Slightly improve quality of fit
         dxs, res, rk, s = scipy.linalg.lstsq(As, db)
         if rk != A.shape[1]:
             raise ValueError("Condition number still too bad; "
-                             "singular values are %s"
-                             % s)
+                             "singular values are %s and rank "
+                             "should be %d"
+                             % (s, A.shape[1]))
         if xs is None:
             xs = dxs
         else:
             xs += dxs
         db = bu - np.dot(As, xs)
         chi2 = np.sum(db**2)
-        if chi2<best_chi2:
+        if chi2 < best_chi2:
             best_chi2 = chi2
             best_x = xs
         #debug("Residual chi-squared: %s", np.sum(db**2))
-    x = best_x/Ascales # FIXME: test for multiple b
-    
+    x = best_x/Ascales    # FIXME: test for multiple b
+
     class Result:
         pass
     r = Result()
     r.x = x
+    r.residuals = b-np.dot(A, x)
+    if uncerts is None:
+        r.residuals_scaled = r.residuals
+    else:
+        r.residuals_scaled = r.residuals/uncerts
+    r.singular_values = s
     r.chi2 = best_chi2
     bias_corr = A.shape[0]/float(A.shape[0]-A.shape[1])
     r.reduced_chi2 = bias_corr*r.chi2/A.shape[0]
     Atas = np.dot(As.T, As)
     covs = scipy.linalg.pinv(Atas)
-    r.cov = covs/Ascales[:,None]/Ascales[None,:]
+    r.cov = covs/Ascales[:, None]/Ascales[None, :]
     r.uncerts = np.sqrt(np.diag(r.cov))
-    r.corr = r.cov/r.uncerts[:,None]/r.uncerts[None,:]
+    r.corr = r.cov/r.uncerts[:, None]/r.uncerts[None, :]
     return r
+
 
 ################################################################################################
 ####-------------------Derivatives---------------------------------------------------------#####
 ################################################################################################
 
 def der_fit(data,phase,unc):
+    """Does additional fit of residuals (phase) for all linear parameters using 'derivatives' (responce
+       of residuals to each parameter) provided by timing fit.
+       Returns corrected array of residuals
+data -- data package ectracted form pickle (contains phase, mjd, unc, all fit parameters and corresponing
+derivatives
+phase, unc -- residuals you want to refit and its uncertaities.
+"""
+
+
     d=np.array(data['derivatives'])[np.newaxis][0]
     cols= sorted(d.keys())
     A = np.array([d[c] for c in cols]).T
@@ -165,6 +192,37 @@ def der_of_par(data, par, unc):
     r = lstsq_with_errors(A, b, unc)
     der_par=(b-np.dot(A,r.x))
     return der_par
+
+
+def der_unc(data):
+    """Does additional fit of residuals (phase) for all linear parameters using 'derivatives' (responce
+       of residuals to each parameter) provided by timing fit.
+       Returns corrected array of residuals
+data -- data package ectracted form pickle (contains phase, mjd, unc, all fit parameters and corresponing
+derivatives
+phase, unc -- residuals you want to refit and its uncertaities.
+"""
+
+    phase=data['residuals']
+    unc=data['phase_uncerts']
+    d=np.array(data['derivatives'])[np.newaxis][0]
+    cols= sorted(d.keys())
+
+    A = np.array([d[c] for c in cols]).T
+    b=phase
+    r = lstsq_with_errors(A, b, unc)
+    
+    for (i,c) in enumerate(cols):
+        if c in data['best_parameters']:
+            v = data['best_parameters'][c]
+        elif c in data['linear_parameters']:
+            v = data['linear_parameters'].index(c)
+        else:
+            v = 0
+        print i, c, v-r.x[i], "+/-", r.uncerts[i], (r.x/r.uncerts)[i], "sigma"
+    
+    return
+
 
 
 #************************************************************************************************************************ARROWS_OBJECT_AND_FUNCTIONS*******************
@@ -525,7 +583,8 @@ def make_der_array(my_data, my_ampl, ar_len, filename):
             #Pickle it:
             cf_10000 = {
                 'init_coeff': in_final[i-9999:i+1],
-                'der_coeff': der_final[i-9999:i+1]
+                'der_coeff': der_final[i-9999:i+1],
+                'sigma': my_ampl
             }
             
             with open('%s_%f_%d.pickle'%(filename,my_ampl,i+1), 'wb') as g:
