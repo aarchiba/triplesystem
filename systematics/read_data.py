@@ -120,6 +120,98 @@ def color_fun(color):
     return err_clr, face_clr, mec_clr
 
 
+def day_to_tasc(mjd, base_mjd, tasc_o, pb_o):
+    zero_tasc=tasc_o+base_mjd# - pb_o
+    tasc_time=(mjd-zero_tasc)/pb_o
+    return tasc_time
+
+
+def plot_res_tasc(data, mjd, phase, unc, name, color='b',scl=None):
+    base_mjd=data['base_mjd']    
+    bp = data["best_parameters"]
+    #p_period=1./bp['f0']
+    p_period = 0.00273258863228
+    pb_i = bp['pb_i']
+    pb_o = bp['pb_o']
+    tasc_i = bp["tasc_i"]
+    tasc_o = bp["tasc_o"]
+    microsec=1e6*p_period
+    
+    if scl is None:
+        scale=microsec
+    else:
+        scale=scl
+    
+    #a0_format:
+    im_width=15
+    my_width=15
+    mar_size=my_width*0.28
+    lab_size=my_width*1.4
+    tick_size=my_width*0.66
+    font_size=my_width*1.8    
+    
+    fig, ax1 = plt.subplots()
+    ax2 = ax1.twiny()
+    clr_grey=np.array([170, 183, 184])/255.0
+    #for i in range(0,6):
+    #    t = pb_o*i+tasc_o+base_mjd
+    #    ax1.axvline(t, linestyle='--', color=clr_grey)
+        
+    for k in range(0,len(color)):
+        tel=tel_transform(data,'%s'%name[k])
+        err_clr, face_clr, mec_clr=color_fun(color[k])
+	tasc_time=day_to_tasc(mjd[tel.index], base_mjd, tasc_o, pb_o)           
+        ax1.errorbar(tasc_time, phase[tel.index]*scale, 
+                     yerr=unc[tel.index]*scale, 
+                     marker="o", 
+                     linestyle='none', 
+                     mec=mec_clr, 
+                     markerfacecolor=face_clr, 
+                     color=err_clr, 
+                     markersize=mar_size)
+
+    plt.rc('xtick', labelsize=lab_size) 
+    plt.rc('ytick', labelsize=lab_size) 
+
+    majorLocator = MultipleLocator(50)
+    majorFormatter = FormatStrFormatter('%.0f')
+    minorLocator = MultipleLocator(10)
+    yearLocator = MultipleLocator(1)
+
+    font0 = FontProperties()
+    font0.set_size('%d'%font_size)
+    font0.set_family('sans')
+    font0.set_style('normal')
+    font0.set_weight('bold')
+
+    ax1.set_xlabel('Outer orbital phase',  fontproperties=font0)
+    ax1.tick_params('x', colors='k', size=tick_size)
+    ax1.tick_params('y', colors='k', size=tick_size)
+
+    ax2.set_xlabel('Years',  fontproperties=font0)
+    ax2.tick_params('x', colors='k', size=tick_size)
+    ax2.xaxis.set_major_formatter(majorFormatter)
+    ax1.tick_params('x', colors='k', size=tick_size)
+    if scale==microsec:
+        ax1.set_ylabel(r'residuals ($\mu$s)', fontproperties=font0)
+    else:
+        ax1.set_ylabel(r'residuals', fontproperties=font0)
+    ax2.xaxis.set_major_locator(yearLocator)
+
+    ax1.set_xlim(0.1,6.1)
+
+    #d_n, d_x = ax1.get_xlim()
+    ax2.set_xlim(day_to_year(base_mjd), day_to_year(base_mjd+2010))
+
+    #d_n, d_x = ax1.get_xlim()
+    #ax1.set_xlim(day_to_tasc(d_n, base_mjd, tasc_o, pb_o), day_to_tasc(d_x, base_mjd, tasc_o, pb_o))
+    print ax1.get_xlim()
+    print ax2.get_xlim()
+    
+    plt.gcf().set_size_inches(im_width,im_width*4./15.)
+
+    return
+
 def plot_res(data, mjd, phase, unc, name, color='b',scl=None):
     base_mjd=data['base_mjd']    
     bp = data["best_parameters"]
@@ -207,7 +299,7 @@ def fit_plot(emac, number, name, color, numplots, limm):
     err_clr, face_clr, mec_clr=color_fun(color)
     mu, std = norm.fit(emac)
     ax=plt.subplot(2, int(numplots/2), number)
-    ax.hist(emac, bins=100, normed=True, alpha=0.6, color=err_clr)
+    ax.hist(emac, bins=100, normed=True, alpha=0.8, color=err_clr)
     xmin, xmax = plt.xlim()
     x = np.linspace(xmin, xmax, 100)
     p = norm.pdf(x, mu, std)
@@ -286,13 +378,13 @@ def plot_hex(par_dict, mjd,res, size, colorbar=True):
     pb_i = par_dict['pb_i']
     pb_o = par_dict['pb_o']
     plt.set_cmap('coolwarm')
-    im=plt.hexbin((mjd/pb_i)%1, mjd,res,size) 
+    im=plt.hexbin((mjd/pb_i)%1, mjd,res,size,linewidths=0.1) 
     plt.xlabel("inner phase", fontproperties=font2)
     plt.ylabel("MJD", fontproperties=font2)
     if colorbar:
         cb = plt.colorbar(im)
         cb.set_label('ns', fontproperties=font2)
-    plt.gcf().set_size_inches(my_width,my_width*0.77)
+    plt.gcf().set_size_inches(my_width*0.77,my_width)
     return
 
 
