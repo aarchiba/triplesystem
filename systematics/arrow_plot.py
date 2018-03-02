@@ -877,6 +877,138 @@ def upper_limit_GR(my_data, my_pickle, scl_s='ns', delta=None, sgnl_delta=None, 
     return delta_value
 
 
+def upper_limit_delta(my_data, my_pickle, scl_s='ns', scl=None):
+    import numpy as np
+    import pickle
+    import scipy.linalg
+    from scipy import stats
+    from scipy.stats import norm
+    from scipy import optimize
 
+    base_mjd=my_data['base_mjd']
+    par_dict=my_data['best_parameters']
+    par_dict['base_mjd']=base_mjd
+    
+    deltaa=my_data['best_parameters']['delta']
+
+    p_period = my_data['f0']**(-1)
+    
+    limiit=10000
+    c = abs(my_data['residuals']/my_data['phase_uncerts'])<limiit
+    new_phase = np.array(my_data['residuals'][c], dtype=np.float64)
+    new_times = np.array(my_data['times'][c], dtype=np.float64)+base_mjd
+    new_unc = np.array(my_data['phase_uncerts'][c], dtype=np.float64)
+    
+    if scl_s == 'ns':
+        scl=p_period*1e9
+    else:
+        if scl_s == 'mus':
+            scl=p_period*1e6
+        else:
+            if scl == None:
+                scl=1.
+            else:
+                scl=scl
+    
+    #Do additional derivatives    
+    better_phase=der_fit(my_data,new_phase,new_unc)
+    delta_only=der_of_par(my_data,'delta',new_unc)
+
+    #Caclulate sqrt(sum(X^2)) of the arrow coefficient from the real data fit
+    my_coeff=ar_coeff(par_dict, 4, new_times, better_phase*scl, new_unc*scl)
+    my_F=sqr_lengths(my_coeff)
+    print 'sqrt(sum(X^2)) in %s:'%scl_s, my_F
+
+    #Get the value of delta from the arrow fit:
+    signal_delta=draw_plot(par_dict, 4, new_times, delta_only*deltaa*scl, new_unc*scl*1e-12, color='red')
+    print 'signal of Delta in %s'%scl_s, signal_delta, '; the fit value of Delta', deltaa
+    
+    #Unpickle array with der_coeff collection:
+    with open('%s'%my_pickle, 'rb') as f:
+        array_pickle = pickle.load(f)
+
+    my_in=array_pickle['init_coeff']
+    my_der=array_pickle['der_coeff']
+    my_sigma_in=array_pickle['sigma']
+    my_delta=array_pickle['delta_values']
+
+    my_sigma=my_sigma_in*scl#where my_sigma_in is the amplitude of the generated systematic what I input (in pulsar rotations)
+    #my_sigma is this amplitude in ns
+    real_F=my_F#real_F root mean squared of observed arrow coefficients (as a result of the fit of the real data). in ns
+    my_der=my_der# collection of derivatives substructed coeff. I builded up.
+
+    print 'len of der array:', len(my_in)
+    
+
+    #Calculate resulted mean sigma:
+    F_list=[]
+    sigma_list=[]
+    delta_list=[]
+
+    for i in range(0,len(my_der)):
+        F=sqr_lengths(my_der[i])*scl
+        F_list.append(F)
+        sig=(my_sigma*real_F)/F
+        sigma_list.append(sig)
+        delta_v=(my_delta[i]*real_F)/F
+        delta_list.append(delta_v)
+        #print 'F', i, '=', F, 'mus', (my_sigma*real_F)/F
+
+    F_array=np.array(F_list, dtype=np.float64)
+    sigma_array=np.array(sigma_list, dtype=np.float64)
+    delta_array=np.array(delta_list, dtype=np.float64)
+
+    print 'mean of resulted sigma (%s):'%scl_s, np.mean(sigma_array), '; its std:', np.std(sigma_array)
+    mean_sigma=np.mean(sigma_array)
+
+    #Calculate the survival function:
+    my_sf=norm.sf(signal_delta, 0, sigma_array).mean()*2./(2*norm.sf(1))
+
+    print 'sf(real_Delta):', my_sf
+    
+    #root finder:
+
+    def my_fun_1(a):
+        return norm.sf(a, 0, sigma_array).mean()*2. - (2*norm.sf(1))
+    def my_fun_2(a):
+        return norm.sf(a, 0, sigma_array).mean()*2. - (2*norm.sf(2))
+    def my_fun_3(a):
+        return norm.sf(a, 0, sigma_array).mean()*2. - (2*norm.sf(3))
+
+
+    my_sol_1 = optimize.root(my_fun_1, [mean_sigma], method='hybr')
+    my_sol_2 = optimize.root(my_fun_2, [mean_sigma*2.], method='hybr')
+    my_sol_3 = optimize.root(my_fun_3, [mean_sigma*3.], method='hybr')
+    print '1_sigma', my_sol_1.x[0], '%s'%scl_s
+    print '2_sigma', my_sol_2.x[0], '%s'%scl_s
+    print '3_sigma', my_sol_3.x[0], '%s'%scl_s
+    
+    #The upper limit:
+    delta_value=(deltaa/signal_delta)*my_sol_1.x[0]
+    print '1-sigma of Delta:', np.abs(delta_value)
+
+    one_sigma=scipy.stats.norm.cdf(-1)
+    two_sigma=scipy.stats.norm.cdf(-2)
+    sorted_delta=sorted(delta_array)
+    delta_1sigma=np.percentile(sorted_delta, 100*one_sigma)
+    delta_2sigma=np.percentile(sorted_delta, 100*two_sigma)
+
+    delta_1sigma_ul=np.percentile(sorted_delta, 100*(1-one_sigma))
+    delta_2sigma_ul=np.percentile(sorted_delta, 100*(1-two_sigma))
+
+    print '1-sigma:', delta_1sigma, '1-sigma ul:', delta_1sigma_ul
+    print '2-sigma:', delta_2sigma, '2-sigma ul:', delta_2sigma_ul 
+
+    #print 'derived delta:', np.median(delta_array)
+    
+    my_mu, my_std = norm.fit(delta_array)
+    print 'delta mu:', my_mu, 'std:', my_std
+    plt.show() 
+
+    p = norm.pdf(delta_array, my_mu, my_std)
+    plt.hist(delta_array, bins=100, alpha=0.8, color='b')
+    plt.title("mu = %.6f,  std = %.6f" %(my_mu, my_std))
+
+    return delta_value
 
 
