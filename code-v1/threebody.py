@@ -23,7 +23,10 @@ info = logger.info
 
 
 def mjd_fromstring(s, base_mjd=0):
-    i, f = s.split(".")
+    try:
+        i, f = s.split(".")
+    except ValueError: # No .
+        i, f = s, ""
     i = int(i)-base_mjd
     f = np.float128("0."+f)
     return i+f
@@ -301,7 +304,7 @@ def load_pipeline_toas(
             for n, w in zip(astro_names, l.split()[4:]):
                 derivs[n].append(np.float128(w))
         except ValueError:
-            raise ValueError("Unable to decode line '%s'" % l)
+            raise ValueError("Unable to decode line '%s'; astro_names: %s" % (l,astro_names))
     t2_bats = np.array(t2_bats)
     errs = np.array(errs)*1e-6    # convert to s
     for n in astro_names:
@@ -380,37 +383,28 @@ def trend_matrix(mjds, tel_list, tels, freqs,
     inter-instrument jumps.
     """
     # year_length = 365.256363004    # sidereal year in units of SI days
+    all_fake = tel_list == ["fake_999999"]
+    no_dm = all_fake
 
     non_orbital_basis = []
     names = []
     if const:
         non_orbital_basis.append(np.ones_like(mjds))
         names.append("phase")
-    if derivs is None:
-        # Just use tempo2 for derivatives if you need any of these
-        if position:
-            raise ValueError
-        if proper_motion:
-            raise ValueError
-        if parallax:
-            raise ValueError
-        if dm:
-            raise ValueError
-    else:   # t2_astrometry
-        new_names = []
-        if position:
-            new_names += ['d_RAJ', 'd_DECJ']
-        if proper_motion:
-            new_names += ['d_PMRA', 'd_PMDEC']
-        if parallax:
-            new_names += ['d_PX']
-        if dm:
-            debug("Fitting DM")
-            new_names += ['d_DM']
-        names += new_names
-        for n in new_names:
-            non_orbital_basis.append(derivs[n])
-    if fdn_range is not None:
+    new_names = []
+    if position and not all_fake:
+        new_names += ['d_RAJ', 'd_DECJ']
+    if proper_motion and not all_fake:
+        new_names += ['d_PMRA', 'd_PMDEC']
+    if parallax and not all_fake:
+        new_names += ['d_PX']
+    if dm and not no_dm:
+        debug("Fitting DM")
+        new_names += ['d_DM']
+    names += new_names
+    for n in new_names:
+        non_orbital_basis.append(derivs[n])
+    if fdn_range is not None and not no_dm:
         fdn_min, fdn_max = fdn_range
         for i in range(fdn_min, fdn_max):
             names.append("FD%d" % i)
@@ -423,7 +417,7 @@ def trend_matrix(mjds, tel_list, tels, freqs,
         tel_index = np.array([tel_list.index(t) for t in tl2])
         non_orbital_basis.append(tel_index[:, None] == tels[None, :])
         names += ["j_%s" % t for t in tl2]
-    if dmx_epochs is not None:
+    if dmx_epochs is not None and not no_dm:
         ipm = derivs["ipm"]
         dmx_epochs = np.asarray(dmx_epochs)
         ipm_basis = np.zeros((len(dmx_epochs), len(mjds)), np.longdouble)
@@ -453,7 +447,11 @@ def trend_matrix(mjds, tel_list, tels, freqs,
                 non_orbital_basis.append(ipm_basis[j])
                 names.append("IPM_%04d" % j)
 
-    non_orbital_basis = np.vstack(non_orbital_basis).T
+    try:
+        non_orbital_basis = np.vstack(non_orbital_basis).T
+    except ValueError:
+        r = zip(names, [nob.shape for nob in non_orbital_basis])
+        raise ValueError("Problem with non_orbita_basis shapes: %s" % r)
     return non_orbital_basis, names
 
 
@@ -1099,6 +1097,9 @@ class Fitter(object):
         else:
             raise ValueError("Must specify input files")
 
+        if len(self.freqs) != len(self.mjds):
+            raise ValueError
+
         self.tel_base = 'WSRT1400'
         if self.tel_base not in self.tel_list:
             self.tel_base = self.tel_list[0]
@@ -1537,15 +1538,20 @@ class Fitter(object):
 
 
 def hexplot(best_parameters, days, values,
-            gridsize=(20, 60)):
+            gridsize=(60, 20), wrap_outer=False):
     import matplotlib.pyplot as plt
-    xs = ((days-best_parameters["tasc_i"])/best_parameters["pb_i"]) % 1
-    ys = ((days-best_parameters["tasc_o"])/best_parameters["pb_o"])
+    ys = ((days-best_parameters["tasc_i"])/best_parameters["pb_i"]) % 1
+    xs = ((days-best_parameters["tasc_o"])/best_parameters["pb_o"])
+    nx, xx = np.amin(xs), np.amax(xs)
+    if wrap_outer:
+        xs = xs % 1
+        nx, xx = 0, 1
     p = plt.hexbin(xs, ys, values, gridsize=gridsize,
-                   extent=(0, 1, np.amin(ys), np.amax(ys)))
-    plt.xlim(0, 1)
-    plt.xlabel("Inner orbital phase")
-    plt.ylabel("Outer orbital phase")
+                   extent=(nx, xx, 0, 1))
+    plt.xlim(nx, xx)
+    plt.ylim(0, 1)
+    plt.ylabel("Inner orbital phase")
+    plt.xlabel("Outer orbital phase")
     return p
 
 
