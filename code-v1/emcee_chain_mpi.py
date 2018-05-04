@@ -1,4 +1,3 @@
-from glob import glob
 import os
 import sys
 import tempfile
@@ -9,14 +8,14 @@ import time
 import logging
 
 import numpy as np
-import scipy.linalg
 
 import emcee
+import mpi_pool
 
 import threebody
 
 jobid = os.environ.get('PBS_JOBID','local')
-dbdir = os.path.join('/home/aarchiba/projects/threebody/emcee-chains',jobid)
+dbdir = os.path.join('/data2/people/aarchiba/projects/triplesystem/code-v1/emcee-chains',jobid)
 try:
     os.mkdir(dbdir)
 except OSError:
@@ -26,7 +25,7 @@ logger = logging.getLogger()
 if True:
     logger.setLevel(logging.DEBUG)
     fh = logging.FileHandler(os.path.join(
-        dbdir,"rank-%s.log" % os.environ['OMPI_COMM_WORLD_RANK']))
+        dbdir, "rank-%s.log" % os.environ['OMPI_COMM_WORLD_RANK']))
     formatter = logging.Formatter(
         '%(asctime)s - %(module)s:%(funcName)s:%(lineno)s - %(message)s')
     fh.setFormatter(formatter)
@@ -35,119 +34,66 @@ if True:
 # For some reason numpy sets the CPU affinity so we only use one processor
 # Aargh! but taskset fixes it
 # Not needed if using MPI
-#os.system("taskset -p 0xffffffff %d" % os.getpid())
+# os.system("taskset -p 0xffffffff %d" % os.getpid())
 
 trust_nfs = True
 
 n_steps = 100000
 
+logger.debug("Process of rank %s running on host %s", 
+             os.environ['OMPI_COMM_WORLD_RANK'],
+             os.environ["HOST"])
+logger.debug("Environment: %s", os.environ)
 logger.debug("creating Fitter")
-#mode = 'sep-2014-01'
-mode = 'file:emcee_params.pickle'
-#only_tels = ('AO1350','AO1440')
-#only_tels = ('GBT1500',)
-#only_tels = ('WSRT1400',)
-
-if mode=='GR':
-    fitter_params = dict(files="0337+17-scott-2013-08-29",
-                         parfile="0337_tempo2_pm.par",
-                         tzrmjd_middle='auto',
-                         fit_pos=True, fit_pm=False, fit_px=True,
-                         t2_astrometry=True,
-                         kopeikin=True,
-                         ppn_mode='GR')
-elif mode=='heavysimple':
-    fitter_params = dict(files="0337+17-scott-2013-08-29",tzrmjd_middle='auto',
-                         parfile="0337_tempo2_pm.par",
-                         fit_pos=True,
-                         fit_pm=False,
-                         fit_px=True,
-                         t2_astrometry=True,
-                         kopeikin=True,
-                         priors=('dbeta','dgamma'),
-                         ppn_mode='heavysimple')
-elif mode=='paper1':
-    fitter_params = dict(files="0337+17-scott-2013-06-06",
-                         parfile="0337_tempo2_nobinary.par",
-                         tzrmjd_middle='auto',
-                         fit_pos=False,
-                         fit_pm=False,
-                         fit_px=False,
-                         t2_astrometry=True,
-                         kopeikin=False,
-                         priors=(),
-                         ppn_mode=None)
-elif mode=='paper2':
-    fitter_params = dict(files="0337+17-scott-2013-06-06",
-                         parfile="0337_tempo2_nobinary.par",
-                         only_tels=only_tels,
-                         tzrmjd_middle='auto',
-                         fit_pos=False,
-                         fit_pm=False,
-                         fit_px=False,
-                         t2_astrometry=True,
-                         kopeikin=False,
-                         priors=(),
-                         ppn_mode=None)
-elif mode=='vlbi-2014-02':
-    fitter_params = dict(files="0337+17-anne-2014-02-04c",
-                         parfile="0337_tempo2_px_optical.par",
-                         tzrmjd_middle='auto',
-                         fit_pos=True,
-                         fit_pm=False,
-                         fit_px=False,
-                         t2_astrometry=True,
-                         kopeikin=False,
-                         priors=(),
-                         ppn_mode='GR')
-elif mode=='sep-2014-01':
-    fitter_params = dict(files="0337+17-anne-2014-02-04c",
-                         parfile="0337_tempo2_px_optical.par",
-                         tzrmjd_middle='auto',
-                         fit_pos=True,
-                         fit_pm=False,
-                         fit_px=False,
-                         t2_astrometry=True,
-                         kopeikin=False,
-                         priors=('dbeta','dgamma'),
-                         ppn_mode='heavysimple')
-elif mode.startswith("file"):
-    fn = mode.split(":")[1]
-    fitter_params = pickle.load(open(fn,"rb"))
-else:
-    raise ValueError("Unknown mode")
+fn = 'emcee_params.pickle'
+fitter_params = pickle.load(open(fn, "rb"))
 
 F = threebody.Fitter(**fitter_params)
 logger.debug("Fitter created")
 j = 0
+
+
 def lnprob(offset):
     global j
     logger.debug("call %d" % j)
     j = j+1
     params = F.best_parameters.copy()
-    if len(offset)!=len(F.parameters):
+    if len(offset) != len(F.parameters):
         raise ValueError("Parameter mismatch between walker and Fitter")
-    for p,o in zip(F.parameters, offset):
+    for p, o in zip(F.parameters, offset):
         params[p] += o
+    if False:
+        with open("%s/eval-params-%s-%d" 
+                  % (dbdir, os.environ["OMPI_COMM_WORLD_RANK"], j-1), 
+                  "wb") as f:
+            pickle.dump(params, f)
     logger.debug("started lnprob computation")
     r = F.lnprob(params)
     logger.debug("finished lnprob computation with %s" % r)
     extra_info = {}
+    if not np.isfinite(r):
+        return -np.inf, {}
     extra_info['linear_part'] = F.compute_linear_parts(params)
     for op in ['initial_values', 'time', 'n_evaluations', 'parameter_dict']:
         extra_info[op] = F.last_orbit[op]
+    logger.debug("lnprob done, returning %s and awaiting command", r)
     return r, extra_info
+
+
 def lnprior(offset):
     params = F.best_parameters.copy()
-    for p,o in zip(F.parameters, offset):
+    for p, o in zip(F.parameters, offset):
         params[p] += o
     return F.lnprior(params)
+
+
 def lnprob_internal(offset):
     ll, blob = lnprob(offset)
     return ll+lnprior(offset), blob
 
+
 logger.debug("creating pool")
-pool = emcee.utils.MPIPool()
+pool = mpi_pool.MPIPool(debug=True, loadbalance=True)
 if not pool.is_master():
     logger.info("waiting for commands")
     pool.wait()
@@ -166,11 +112,12 @@ try:
     if p0.shape[0] == 1:
         logger.info("only one temperature so removing temperature axis")
         p0 = p0[0]
-    if p0.shape[-1]!=len(F.parameters):
+    if p0.shape[-1] != len(F.parameters):
         raise ValueError("Parameter mismatch between "
-            "walker (%dd) and Fitter (%dd)" % (p0.shape[-1],len(F.parameters)))
+                         "walker (%dd) and Fitter (%dd)" 
+                         % (p0.shape[-1],len(F.parameters)))
 
-    if len(p0.shape)==2:
+    if len(p0.shape) == 2:
         logger.info("using EnsembleSampler (warning: untested)")
         sampler = emcee.EnsembleSampler(
             p0.shape[0],p0.shape[1],
@@ -193,6 +140,7 @@ try:
     if not trust_nfs:
         # Run saving in the background so it doesn't interfere with computation
         done = False
+
         def save_loop():
             logger.debug("starting saving loop")
             while not done:
@@ -204,7 +152,7 @@ try:
     logger.debug("starting sampling loop")
     logger.info("fitter parameters %s" % fitter_params)
     with open(local_dbdir+"/fitter_params.pickle","wb") as f:
-        pickle.dump(fitter_params,f)
+        pickle.dump(fitter_params, f)
     logger.info("parameters %s" % F.parameters)
     np.save(local_dbdir+"/parameters.npy", F.parameters)
     logger.info("best parameters %s" % F.best_parameters)
@@ -213,18 +161,22 @@ try:
     logger.debug("starting sampling loop")
     i = 0
     for result in sampler.sample(p0, iterations=n_steps,
-                                            storechain=False):
+                                 storechain=False):
         pos = result[0]
-        if len(p0.shape)==2:
+        if len(p0.shape) == 2:
             prob = result[1]
-            blobs = np.array(result[3])
+            if len(result) > 3:
+                blobs = np.array(result[3])
+            else:
+                blobs = None
         else:
             prob = result[2]
             blobs = np.array(result[5])
         logger.debug("writing sample %d" % i)
         np.save(local_dbdir+"/%06d-pos.npy" % i, pos)
         np.save(local_dbdir+"/%06d-prob.npy" % i, prob)
-        np.save(local_dbdir+"/%06d-blobs.npy" % i, blobs)
+        if blobs is not None:
+            np.save(local_dbdir+"/%06d-blobs.npy" % i, blobs)
         i += 1
 finally:
     if not trust_nfs:

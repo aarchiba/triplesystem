@@ -1,6 +1,6 @@
 import inspect
 import numpy as np
-from scipy.optimize import newton, fsolve
+from scipy.optimize import newton
 from scipy.linalg import block_diag
 import scipy.linalg
 
@@ -42,10 +42,14 @@ def eccentric_from_mean(e, mean_anomaly):
         eccentric_anomaly - the true anomaly
         derivatives - pair of derivatives with respect to the two inputs
     """
+    def newt(E):
+        r = E-e*np.sin(E)-mean_anomaly
+        return r
     eccentric_anomaly = newton(
-            lambda E: E-e*np.sin(E)-mean_anomaly,
+            newt,
             mean_anomaly,
-            lambda E: 1-e*np.cos(E))
+            lambda E: 1-e*np.cos(E),
+            tol=1e-18)  # 1e-19 or 1e-20 can lead to infinite loops
     eccentric_anomaly_de = np.sin(eccentric_anomaly)/(1-e*np.cos(eccentric_anomaly))
     eccentric_anomaly_prime = (1-e*np.cos(eccentric_anomaly))**(-1)
     return eccentric_anomaly, [eccentric_anomaly_de, eccentric_anomaly_prime]
@@ -454,7 +458,8 @@ def kepler_three_body(
     q_o = np.exp(newton(
         lambda lnq: 3*lnq-np.log1p(np.exp(lnq))*2
                 - np.log(m_temp) + np.log(m_i),
-        0))
+        0, 
+        tol=1e-20))
 
     d_m_i = (m_i_prime[0]*(d_a_i*(1+1./q_i)-a_i*d_q_i/q_i**2)
             +m_i_prime[1]*d_pb_i)
