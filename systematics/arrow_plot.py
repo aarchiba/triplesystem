@@ -982,8 +982,7 @@ def upper_limit_delta(my_data, my_pickle, scl_s='ns', scl=None):
     print '1_sigma', my_sol_1.x[0], '%s'%scl_s
     print '2_sigma', my_sol_2.x[0], '%s'%scl_s
     print '3_sigma', my_sol_3.x[0], '%s'%scl_s
-    
-    #The upper limit:
+    #Dimensionless value:
     delta_value=(deltaa/signal_delta)*my_sol_1.x[0]
     print '1-sigma of Delta:', np.abs(delta_value)
 
@@ -993,11 +992,17 @@ def upper_limit_delta(my_data, my_pickle, scl_s='ns', scl=None):
     delta_1sigma=np.percentile(sorted_delta, 100*one_sigma)
     delta_2sigma=np.percentile(sorted_delta, 100*two_sigma)
 
-    delta_1sigma_ul=np.percentile(sorted_delta, 100*(1-one_sigma))
-    delta_2sigma_ul=np.percentile(sorted_delta, 100*(1-two_sigma))
+    delta_1sigma_ul=np.abs(deltaa)+np.abs(np.percentile(sorted_delta, 100*(1-one_sigma)))
+    delta_2sigma_ul=np.abs(deltaa)+np.abs(np.percentile(sorted_delta, 100*(1-two_sigma)))
+    delta_1sigma_signal=np.abs(delta_1sigma*signal_delta/deltaa)
+    delta_2sigma_signal=np.abs(delta_2sigma*signal_delta/deltaa)
+    delta_1sigma_ul_signal=np.abs(delta_1sigma_ul*signal_delta/deltaa)
+    delta_2sigma_ul_signal=np.abs(delta_2sigma_ul*signal_delta/deltaa)
 
-    print '1-sigma:', delta_1sigma, '1-sigma ul:', delta_1sigma_ul
-    print '2-sigma:', delta_2sigma, '2-sigma ul:', delta_2sigma_ul 
+    print 'derived from delta distribution ----------------------------------------------:' 
+
+    print '1-sigma:', np.abs(delta_1sigma), 'in %s:'%scl_s, delta_1sigma_signal, '1-sigma ul:', delta_1sigma_ul, 'in %s:'%scl_s, delta_1sigma_ul_signal
+    print '2-sigma:', np.abs(delta_2sigma), 'in %s:'%scl_s, delta_2sigma_signal, '2-sigma ul:', delta_2sigma_ul, 'in %s:'%scl_s, delta_2sigma_ul_signal
 
     #print 'derived delta:', np.median(delta_array)
     
