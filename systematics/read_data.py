@@ -357,7 +357,7 @@ def fit_single_plot(emac, name, color, limm):
 
 
 
-def plot_hex(par_dict, mjd,res, size, colorbar=True):
+def plot_hex(par_dict, mjd,res, size, colorbar=True, vmin=None, vmax=None):
     my_width=6
     mar_size=my_width*0.33
     lab_size=my_width*1.7
@@ -378,7 +378,7 @@ def plot_hex(par_dict, mjd,res, size, colorbar=True):
     pb_i = par_dict['pb_i']
     pb_o = par_dict['pb_o']
     plt.set_cmap('coolwarm')
-    im=plt.hexbin((mjd/pb_i)%1, mjd,res,size,linewidths=0.1) 
+    im=plt.hexbin((mjd/pb_i)%1, mjd,res,size,linewidths=0.1, vmin=vmin, vmax=vmax) 
     plt.xlabel("inner phase", fontproperties=font2)
     plt.ylabel("MJD", fontproperties=font2)
     if colorbar:
